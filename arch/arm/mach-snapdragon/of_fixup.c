@@ -28,6 +28,7 @@
 #include <linux/errno.h>
 #include <linker_lists.h>
 #include <stdlib.h>
+#include <tee/optee.h>
 #include <time.h>
 
 /**
@@ -228,6 +229,37 @@ static void fixup_usb_nodes(struct device_node *root)
 	}
 }
 
+static void add_optee_node(struct device_node *root)
+{
+	struct device_node *fw = NULL, *optee = NULL;
+	int ret;
+
+	fw = of_find_node_by_path("/firmware");
+	if (!fw) {
+		log_err("Failed to find /firmware node\n");
+		return;
+	}
+
+	ret = of_add_subnode(fw, "optee", strlen("optee") + 1, &optee);
+	if (ret) {
+		log_err("Failed to add 'optee' subnode: %d\n", ret);
+		return;
+	}
+
+	ret = of_write_prop(optee, "compatible", strlen("linaro,optee-tz") + 1,
+			    "linaro,optee-tz");
+	if (ret) {
+		log_err("Failed to add optee 'compatible' property: %d\n", ret);
+		return;
+	}
+
+	ret = of_write_prop(optee, "method", strlen("smc") + 1, "smc");
+	if (ret) {
+		log_err("Failed to add optee 'method' property: %d\n", ret);
+		return;
+	}
+}
+
 #define time_call(func, ...) \
 	do { \
 		u64 start = timer_get_us(); \
@@ -240,6 +272,9 @@ static int qcom_of_fixup_nodes(void * __maybe_unused ctx, struct event *event)
 	struct device_node *root = event->data.of_live_built.root;
 
 	time_call(fixup_usb_nodes, root);
+
+	if (IS_ENABLED(CONFIG_OPTEE) && is_optee_smc_api())
+		time_call(add_optee_node, root);
 
 	return 0;
 }
