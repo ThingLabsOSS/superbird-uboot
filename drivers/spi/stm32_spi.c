@@ -192,6 +192,11 @@ static void stm32_spi_read_rxfifo(struct udevice *bus)
 	log_debug("%d bytes left\n", priv->rx_len);
 }
 
+static bool stm32_spi_is_enabled(void __iomem *base)
+{
+	return !!(readl(base + STM32_SPI_CR1) & SPI_CR1_SPE);
+}
+
 static int stm32_spi_enable(void __iomem *base)
 {
 	log_debug("\n");
@@ -245,9 +250,7 @@ static void stm32_spi_stopxfer(struct udevice *dev)
 
 	dev_dbg(dev, "\n");
 
-	cr1 = readl(base + STM32_SPI_CR1);
-
-	if (!(cr1 & SPI_CR1_SPE))
+	if (!stm32_spi_is_enabled(base))
 		return;
 
 	/* Wait on EOT or suspend the flow */
