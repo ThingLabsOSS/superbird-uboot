@@ -61,6 +61,13 @@ uint sandbox_spi_get_mode(struct udevice *dev)
 	return priv->mode;
 }
 
+uint sandbox_spi_get_wordlen(struct udevice *dev)
+{
+	struct spi_slave *slave = dev_get_parent_priv(dev);
+
+	return slave->wordlen;
+}
+
 static int sandbox_spi_set_wordlen(struct udevice *dev, unsigned int wordlen)
 {
 	struct spi_slave *slave = dev_get_parent_priv(dev);
