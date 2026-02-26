@@ -432,6 +432,8 @@ F:	drivers/net/phy/mediatek/
 F:	drivers/phy/phy-mtk-*
 F:	drivers/pinctrl/mediatek/
 F:	drivers/power/domain/mtk-power-domain.c
+F:	drivers/power/pmic/mtk-pwrap.c
+F:	drivers/power/regulator/mt*.c
 F:	drivers/pci/pcie_mediatek_gen3.c
 F:	drivers/pci/pcie_mediatek.c
 F:	drivers/pwm/pwm-mtk.c
@@ -448,6 +450,7 @@ F:	drivers/reset/reset-mediatek.c
 F:	drivers/serial/serial_mtk.c
 F:	include/dt-bindings/clock/mediatek,*
 F:	include/dt-bindings/power/mediatek,*
+F:	include/power/mt*.h
 F:	tools/mtk_image.c
 F:	tools/mtk_image.h
 F:	tools/mtk_nand_headers.c
