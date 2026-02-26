@@ -156,6 +156,8 @@ static const struct gate_clk sc7280_clks[] = {
 	GATE_CLK(GCC_UFS_1_CLKREF_EN, 0x8c000, BIT(0)),
 	GATE_CLK(GCC_SDCC2_AHB_CLK, 0x14008, BIT(0)),
 	GATE_CLK(GCC_SDCC2_APPS_CLK, 0x14004, BIT(0)),
+	GATE_CLK(GCC_SDCC1_AHB_CLK,  0x75004, BIT(0)),
+	GATE_CLK(GCC_SDCC1_APPS_CLK, 0x75008, BIT(0)),
 };
 
 static int sc7280_enable(struct clk *clk)
