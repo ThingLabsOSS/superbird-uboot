@@ -269,6 +269,11 @@ static void sunxi_nfc_set_user_data_len(const struct nfc_config *nfc,
 	writel_nfc(val, NFC_REG_USER_DATA_LEN(nfc, step));
 }
 
+/*
+ * Values in this table are obtained by doing:
+ * DIV_ROUND_UP(info->ecc_strength * 14, 8) + USER_DATA_SZ
+ * So it's the number of bytes needed for ECC + user data for one step.
+ */
 #if defined(CONFIG_MACH_SUN50I_H616) || defined(CONFIG_MACH_SUN50I_H6)
 static const int ecc_bytes[] = {
 	32, 46, 54, 60, 74, 82, 88, 96, 102, 110, 116, 124, 130, 138, 144
@@ -338,7 +343,7 @@ static int nand_read_page(const struct nfc_config *conf, u32 offs,
 		nand_change_column(oob_off);
 
 		sunxi_nfc_reset_user_data_len(conf);
-		sunxi_nfc_set_user_data_len(conf, 4, 0);
+		sunxi_nfc_set_user_data_len(conf, USER_DATA_SZ, 0);
 
 		nand_exec_cmd(NFC_DATA_TRANS | NFC_ECC_OP);
 		/* Get the ECC status */
