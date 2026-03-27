@@ -302,6 +302,8 @@ static int nand_read_page(const struct nfc_config *conf, u32 offs,
 	int page = offs / conf->page_size;
 	u32 ecc_st, pattern_found;
 	int i;
+	/* From the controller point of view, we are at step 0 */
+	const int nfc_step = 0;
 
 	if (offs % conf->page_size || len % conf->ecc_size ||
 	    len > conf->page_size || len < 0)
@@ -343,7 +345,7 @@ static int nand_read_page(const struct nfc_config *conf, u32 offs,
 		nand_change_column(oob_off);
 
 		sunxi_nfc_reset_user_data_len(conf);
-		sunxi_nfc_set_user_data_len(conf, USER_DATA_SZ, 0);
+		sunxi_nfc_set_user_data_len(conf, USER_DATA_SZ, nfc_step);
 
 		nand_exec_cmd(NFC_DATA_TRANS | NFC_ECC_OP);
 		/* Get the ECC status */
@@ -361,7 +363,7 @@ static int nand_read_page(const struct nfc_config *conf, u32 offs,
 			pattern_found = readl_nfc(conf->caps->reg_pat_found);
 			pattern_found = field_get(NFC_ECC_PAT_FOUND_MSK(conf),
 						  pattern_found);
-			if (pattern_found & NFC_ECC_PAT_FOUND(0))
+			if (pattern_found & NFC_ECC_PAT_FOUND(nfc_step))
 				return 1;
 		}
 

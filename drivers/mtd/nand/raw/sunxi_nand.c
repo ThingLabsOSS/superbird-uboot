@@ -758,6 +758,8 @@ static int sunxi_nfc_hw_ecc_read_chunk(struct mtd_info *mtd,
 	u32 status;
 	u32 pattern_found;
 	int ret;
+	/* From the controller point of view, we are at step 0 */
+	const int nfc_step = 0;
 
 	if (*cur_off != data_off)
 		nand->cmdfunc(mtd, NAND_CMD_RNDOUT, data_off, -1);
@@ -772,7 +774,7 @@ static int sunxi_nfc_hw_ecc_read_chunk(struct mtd_info *mtd,
 		return ret;
 
 	sunxi_nfc_reset_user_data_len(nfc);
-	sunxi_nfc_set_user_data_len(nfc, USER_DATA_SZ, 0);
+	sunxi_nfc_set_user_data_len(nfc, USER_DATA_SZ, nfc_step);
 
 	sunxi_nfc_randomizer_enable(mtd);
 	writel(NFC_DATA_TRANS | NFC_DATA_SWAP_METHOD | NFC_ECC_OP,
@@ -787,7 +789,7 @@ static int sunxi_nfc_hw_ecc_read_chunk(struct mtd_info *mtd,
 
 	pattern_found = readl(nfc->regs + nfc->caps->reg_pat_found);
 	pattern_found = field_get(NFC_ECC_PAT_FOUND_MSK(nfc), pattern_found);
-	if (pattern_found & NFC_ECC_PAT_FOUND(0)) {
+	if (pattern_found & NFC_ECC_PAT_FOUND(nfc_step)) {
 		u8 pattern = 0xff;
 
 		if (unlikely(!(readl(nfc->regs + NFC_REG_PAT_ID(nfc)) & 0x1)))
@@ -799,7 +801,7 @@ static int sunxi_nfc_hw_ecc_read_chunk(struct mtd_info *mtd,
 		return 1;
 	}
 
-	ret = NFC_ECC_ERR_CNT(0, readl(nfc->regs + NFC_REG_ECC_ERR_CNT(nfc, 0)));
+	ret = NFC_ECC_ERR_CNT(nfc_step, readl(nfc->regs + NFC_REG_ECC_ERR_CNT(nfc, nfc_step)));
 
 	memcpy_fromio(data, nfc->regs + NFC_RAM0_BASE, ecc->size);
 
@@ -807,7 +809,7 @@ static int sunxi_nfc_hw_ecc_read_chunk(struct mtd_info *mtd,
 	sunxi_nfc_randomizer_read_buf(mtd, oob, ecc->bytes + USER_DATA_SZ, true, page);
 
 	status = readl(nfc->regs + NFC_REG_ECC_ST);
-	if (status & NFC_ECC_ERR(0)) {
+	if (status & NFC_ECC_ERR(nfc_step)) {
 		/*
 		 * Re-read the data with the randomizer disabled to identify
 		 * bitflips in erased pages.
@@ -830,7 +832,7 @@ static int sunxi_nfc_hw_ecc_read_chunk(struct mtd_info *mtd,
 		 * Retrieve the corrected OOB bytes.
 		 */
 		sunxi_nfc_user_data_to_buf(readl(nfc->regs +
-						 NFC_REG_USER_DATA(nfc, 0)),
+						 NFC_REG_USER_DATA(nfc, nfc_step)),
 					   oob);
 
 		/* De-randomize the Bad Block Marker. */
@@ -888,6 +890,8 @@ static int sunxi_nfc_hw_ecc_write_chunk(struct mtd_info *mtd,
 	struct sunxi_nfc *nfc = to_sunxi_nfc(nand->controller);
 	struct nand_ecc_ctrl *ecc = &nand->ecc;
 	int ret;
+	/* From the controller point of view, we are at step 0 */
+	const int nfc_step = 0;
 
 	if (data_off != *cur_off)
 		nand->cmdfunc(mtd, NAND_CMD_RNDIN, data_off, -1);
@@ -901,10 +905,10 @@ static int sunxi_nfc_hw_ecc_write_chunk(struct mtd_info *mtd,
 		memcpy(user_data, oob, USER_DATA_SZ);
 		sunxi_nfc_randomize_bbm(mtd, page, user_data);
 		writel(sunxi_nfc_buf_to_user_data(user_data),
-		       nfc->regs + NFC_REG_USER_DATA(nfc, 0));
+		       nfc->regs + NFC_REG_USER_DATA(nfc, nfc_step));
 	} else {
 		writel(sunxi_nfc_buf_to_user_data(oob),
-		       nfc->regs + NFC_REG_USER_DATA(nfc, 0));
+		       nfc->regs + NFC_REG_USER_DATA(nfc, nfc_step));
 	}
 
 	if (data_off + ecc->size != oob_off)
@@ -915,7 +919,7 @@ static int sunxi_nfc_hw_ecc_write_chunk(struct mtd_info *mtd,
 		return ret;
 
 	sunxi_nfc_reset_user_data_len(nfc);
-	sunxi_nfc_set_user_data_len(nfc, USER_DATA_SZ, 0);
+	sunxi_nfc_set_user_data_len(nfc, USER_DATA_SZ, nfc_step);
 
 	sunxi_nfc_randomizer_enable(mtd);
 	writel(NFC_DATA_TRANS | NFC_DATA_SWAP_METHOD |
