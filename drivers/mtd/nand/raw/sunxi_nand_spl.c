@@ -224,22 +224,6 @@ static int nand_change_column(u16 column)
 	return 0;
 }
 
-/*
- * On H6/H616 the user_data length has to be set in specific registers
- * before writing.
- */
-static void sunxi_nfc_reset_user_data_len(const struct nfc_config *nfc)
-{
-	int loop_step = NFC_REG_USER_DATA_LEN_CAPACITY;
-
-	/* not all SoCs have this register */
-	if (!NFC_REG_USER_DATA_LEN(nfc, 0))
-		return;
-
-	for (int i = 0; i < nfc->caps->max_ecc_steps; i += loop_step)
-		writel_nfc(0, NFC_REG_USER_DATA_LEN(nfc, i));
-}
-
 static void sunxi_nfc_set_user_data_len(const struct nfc_config *nfc,
 					int len, int step)
 {
@@ -355,7 +339,6 @@ static int nand_read_page(const struct nfc_config *conf, u32 offs,
 		 */
 		nand_change_column(oob_off);
 
-		sunxi_nfc_reset_user_data_len(conf);
 		sunxi_nfc_set_user_data_len(conf, user_data_sz, nfc_step);
 
 		nand_exec_cmd(NFC_DATA_TRANS | NFC_ECC_OP);
