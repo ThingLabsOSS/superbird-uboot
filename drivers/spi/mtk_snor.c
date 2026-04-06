@@ -362,8 +362,12 @@ static int mtk_snor_pp_buffered(struct mtk_snor_priv *priv,
 		      buf[i];
 		writel(val, priv->base + MTK_NOR_REG_PP_DATA);
 	}
-	mtk_snor_cmd_exec(priv, MTK_NOR_CMD_WRITE,
-			  (op->data.nbytes + 5) * BITS_PER_BYTE);
+
+	ret = mtk_snor_cmd_exec(priv, MTK_NOR_CMD_WRITE,
+				(op->data.nbytes + 5) * BITS_PER_BYTE);
+	if (ret)
+		return ret;
+
 	return mtk_snor_write_buffer_disable(priv);
 }
 
@@ -386,7 +390,7 @@ static int mtk_snor_cmd_program(struct mtk_snor_priv *priv,
 	int rx_len = 0;
 	int reg_offset = MTK_NOR_REG_PRGDATA_MAX;
 	int tx_len, prg_len;
-	int i;
+	int i, ret;
 	void __iomem *reg;
 	u8 val;
 
@@ -435,7 +439,9 @@ static int mtk_snor_cmd_program(struct mtk_snor_priv *priv,
 	/* trigger op */
 	writel(prg_len * BITS_PER_BYTE, priv->base + MTK_NOR_REG_PRG_CNT);
 
-	mtk_snor_cmd_exec(priv, MTK_NOR_CMD_PROGRAM, prg_len * BITS_PER_BYTE);
+	ret = mtk_snor_cmd_exec(priv, MTK_NOR_CMD_PROGRAM, prg_len * BITS_PER_BYTE);
+	if (ret)
+		return ret;
 
 	/* fetch read data */
 	reg_offset = 0;
