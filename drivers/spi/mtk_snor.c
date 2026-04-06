@@ -383,50 +383,63 @@ static int mtk_snor_pp_unbuffered(struct mtk_snor_priv *priv,
 static int mtk_snor_cmd_program(struct mtk_snor_priv *priv,
 				const struct spi_mem_op *op)
 {
-	u32 tx_len = 0;
-	u32 trx_len = 0;
+	int rx_len = 0;
 	int reg_offset = MTK_NOR_REG_PRGDATA_MAX;
+	int tx_len, prg_len;
+	int i;
 	void __iomem *reg;
-	u8 *txbuf;
-	int tx_cnt = 0;
-	u8 *rxbuf = op->data.buf.in;
-	int i = 0;
+	u8 val;
 
-	tx_len = 1 + op->addr.nbytes + op->dummy.nbytes;
-	trx_len = tx_len + op->data.nbytes;
+	tx_len = op->cmd.nbytes + op->addr.nbytes;
+
+	/* count dummy bytes only if we need to write data after it */
 	if (op->data.dir == SPI_MEM_DATA_OUT)
-		tx_len += op->data.nbytes;
+		tx_len += op->dummy.nbytes + op->data.nbytes;
+	else if (op->data.dir == SPI_MEM_DATA_IN)
+		rx_len = op->data.nbytes;
 
-	txbuf = kmalloc_array(tx_len, sizeof(u8), GFP_KERNEL);
-	memset(txbuf, 0x0, tx_len * sizeof(u8));
+	prg_len = op->cmd.nbytes + op->addr.nbytes + op->dummy.nbytes +
+		  op->data.nbytes;
 
-	/* Join all bytes to be transferred */
-	txbuf[tx_cnt] = op->cmd.opcode;
-	tx_cnt++;
-	for (i = op->addr.nbytes; i > 0; i--, tx_cnt++)
-		txbuf[tx_cnt] = ((u8 *)&op->addr.val)[i - 1];
-	for (i = op->dummy.nbytes; i > 0; i--, tx_cnt++)
-		txbuf[tx_cnt] = 0x0;
-	if (op->data.dir == SPI_MEM_DATA_OUT)
-		for (i = op->data.nbytes; i > 0; i--, tx_cnt++)
-			txbuf[tx_cnt] = ((u8 *)op->data.buf.out)[i - 1];
+	/* fill tx data */
 
-	for (i = MTK_NOR_REG_PRGDATA_MAX; i >= 0; i--)
-		writeb(0, priv->base + MTK_NOR_REG_PRGDATA(i));
+	for (i = op->cmd.nbytes; i > 0; i--, reg_offset--) {
+		reg = priv->base + MTK_NOR_REG_PRGDATA(reg_offset);
+		val = (op->cmd.opcode >> ((i - 1) * BITS_PER_BYTE)) & 0xff;
+		writeb(val, reg);
+	}
 
-	for (i = 0; i < tx_len; i++, reg_offset--)
-		writeb(txbuf[i], priv->base + MTK_NOR_REG_PRGDATA(reg_offset));
+	for (i = op->addr.nbytes; i > 0; i--, reg_offset--) {
+		reg = priv->base + MTK_NOR_REG_PRGDATA(reg_offset);
+		val = (op->addr.val >> ((i - 1) * BITS_PER_BYTE)) & 0xff;
+		writeb(val, reg);
+	}
 
-	kfree(txbuf);
+	for (i = 0; i < op->dummy.nbytes; i++, reg_offset--) {
+		reg = priv->base + MTK_NOR_REG_PRGDATA(reg_offset);
+		writeb(0, reg);
+	}
 
-	writel(trx_len * BITS_PER_BYTE, priv->base + MTK_NOR_REG_PRG_CNT);
-
-	mtk_snor_cmd_exec(priv, MTK_NOR_CMD_PROGRAM, trx_len * BITS_PER_BYTE);
-
-	reg_offset = op->data.nbytes - 1;
 	for (i = 0; i < op->data.nbytes; i++, reg_offset--) {
+		reg = priv->base + MTK_NOR_REG_PRGDATA(reg_offset);
+		writeb(((const u8 *)(op->data.buf.out))[i], reg);
+	}
+
+	for (; reg_offset >= 0; reg_offset--) {
+		reg = priv->base + MTK_NOR_REG_PRGDATA(reg_offset);
+		writeb(0, reg);
+	}
+
+	/* trigger op */
+	writel(prg_len * BITS_PER_BYTE, priv->base + MTK_NOR_REG_PRG_CNT);
+
+	mtk_snor_cmd_exec(priv, MTK_NOR_CMD_PROGRAM, prg_len * BITS_PER_BYTE);
+
+	/* fetch read data */
+	reg_offset = 0;
+	for (i = op->data.nbytes - 1; i >= 0; i--, reg_offset++) {
 		reg = priv->base + MTK_NOR_REG_SHIFT(reg_offset);
-		rxbuf[i] = readb(reg);
+		((u8 *)(op->data.buf.in))[i] = readb(reg);
 	}
 
 	return 0;
