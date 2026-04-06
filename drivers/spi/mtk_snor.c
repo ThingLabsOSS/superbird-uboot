@@ -274,6 +274,7 @@ static int mtk_snor_read_bounce(struct mtk_snor_priv *priv,
 {
 	unsigned int rdlen;
 	int ret;
+	dma_addr_t bounce_dma;
 
 	if (op->data.nbytes & MTK_NOR_DMA_ALIGN_MASK)
 		rdlen = (op->data.nbytes + MTK_NOR_DMA_ALIGN) &
@@ -281,11 +282,21 @@ static int mtk_snor_read_bounce(struct mtk_snor_priv *priv,
 	else
 		rdlen = op->data.nbytes;
 
-	ret = mtk_snor_dma_exec(priv, op->addr.val, rdlen,
-				(dma_addr_t)priv->buffer);
+	/* Map bounce buffer for DMA */
+	bounce_dma = dma_map_single(priv->buffer, rdlen, DMA_FROM_DEVICE);
+	if (dma_mapping_error(priv->dev, bounce_dma)) {
+		dev_err(priv->dev, "bounce buffer dma map failed\n");
+		return -EINVAL;
+	}
 
-	if (!ret)
+	ret = mtk_snor_dma_exec(priv, op->addr.val, rdlen, bounce_dma);
+	/* Ensure DMA writes are visible to CPU and copy the requested bytes */
+	if (!ret) {
+		/* Synchronize cached data to CPU visible memory if needed */
 		memcpy(op->data.buf.in, priv->buffer, op->data.nbytes);
+	}
+	/* Unmap bounce buffer regardless of success/failure */
+	dma_unmap_single(bounce_dma, rdlen, DMA_FROM_DEVICE);
 
 	return ret;
 }
