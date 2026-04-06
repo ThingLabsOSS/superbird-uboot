@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0
-//
-// Mediatek SPI-NOR controller driver
-//
-// Copyright (C) 2020 SkyLake Huang <SkyLake.Huang@mediatek.com>
-//
-// Some parts are based on drivers/spi/spi-mtk-nor.c of linux version
+/*
+ * Mediatek SPI-NOR controller driver
+ *
+ * Copyright (C) 2020 SkyLake Huang <SkyLake.Huang@mediatek.com>
+ *
+ * Some parts are based on drivers/spi/spi-mtk-nor.c of linux version
+ */
 
 #include <clk.h>
 #include <cpu_func.h>
@@ -89,13 +90,13 @@
 #define MTK_NOR_REG_DMA_END_DADR 0x724
 
 #define MTK_NOR_PRG_MAX_SIZE 6
-// Reading DMA src/dst addresses have to be 16-byte aligned
+/* Reading DMA src/dst addresses have to be 16-byte aligned */
 #define MTK_NOR_DMA_ALIGN 16
 #define MTK_NOR_DMA_ALIGN_MASK (MTK_NOR_DMA_ALIGN - 1)
-// and we allocate a bounce buffer if destination address isn't aligned.
+/* and we allocate a bounce buffer if destination address isn't aligned. */
 #define MTK_NOR_BOUNCE_BUF_SIZE PAGE_SIZE
 
-// Buffered page program can do one 128-byte transfer
+/* Buffered page program can do one 128-byte transfer */
 #define MTK_NOR_PP_SIZE 128
 
 #define CLK_TO_US(priv, clkcnt) DIV_ROUND_UP(clkcnt, (priv)->spi_freq / 1000000)
@@ -168,8 +169,8 @@ static int mtk_snor_adjust_op_size(struct spi_slave *slave,
 		return 0;
 
 	if (op->addr.nbytes == 3 || op->addr.nbytes == 4) {
-		if (op->data.dir == SPI_MEM_DATA_IN) { //&&
-			// limit size to prevent timeout calculation overflow
+		if (op->data.dir == SPI_MEM_DATA_IN) {
+			/* limit size to prevent timeout calculation overflow */
 			if (op->data.nbytes > 0x400000)
 				op->data.nbytes = 0x400000;
 			if (op->addr.val & MTK_NOR_DMA_ALIGN_MASK ||
@@ -496,7 +497,8 @@ static int mtk_snor_probe(struct udevice *bus)
 	priv->spi_freq = clk_get_rate(&priv->spi_clk);
 	printf("spi frequency: %d Hz\n", priv->spi_freq);
 
-	/* With this setting, we issue one command at a time to
+	/*
+	 * With this setting, we issue one command at a time to
 	 * accommodate to SPI-mem framework.
 	 */
 	writel(MTK_NOR_ENABLE_SF_CMD, priv->base + MTK_NOR_REG_WP);
@@ -504,7 +506,8 @@ static int mtk_snor_probe(struct udevice *bus)
 	mtk_snor_rmw(priv, MTK_NOR_REG_CFG3,
 		     MTK_NOR_DISABLE_WREN | MTK_NOR_DISABLE_SR_POLL, 0);
 
-	/* Unlock all blocks using write status command.
+	/*
+	 * Unlock all blocks using write status command.
 	 * SPI-MEM hasn't implemented unlock procedure on MXIC devices.
 	 * We may remove this later.
 	 */
@@ -521,7 +524,8 @@ static int mtk_snor_probe(struct udevice *bus)
 
 static int mtk_snor_set_speed(struct udevice *bus, uint speed)
 {
-	/* MTK's SNOR controller does not have a bus clock divider.
+	/*
+	 * MTK's SNOR controller does not have a bus clock divider.
 	 * We setup maximum bus clock in dts.
 	 */
 
@@ -530,8 +534,7 @@ static int mtk_snor_set_speed(struct udevice *bus, uint speed)
 
 static int mtk_snor_set_mode(struct udevice *bus, uint mode)
 {
-	/* We set up mode later for each transmission.
-	 */
+	/* We set up mode later for each transmission. */
 	return 0;
 }
 
