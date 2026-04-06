@@ -527,7 +527,6 @@ static int mtk_snor_probe(struct udevice *bus)
 	struct mtk_snor_priv *priv = dev_get_priv(bus);
 	u8 *buffer;
 	int ret;
-	u32 reg;
 
 	priv->base = devfdt_get_addr_ptr(bus);
 	if (!priv->base)
@@ -566,19 +565,6 @@ static int mtk_snor_probe(struct udevice *bus)
 	mtk_snor_rmw(priv, MTK_NOR_REG_CFG2, MTK_NOR_WR_CUSTOM_OP_EN, 0);
 	mtk_snor_rmw(priv, MTK_NOR_REG_CFG3,
 		     MTK_NOR_DISABLE_WREN | MTK_NOR_DISABLE_SR_POLL, 0);
-
-	/*
-	 * Unlock all blocks using write status command.
-	 * SPI-MEM hasn't implemented unlock procedure on MXIC devices.
-	 * We may remove this later.
-	 */
-	writel(2 * BITS_PER_BYTE, priv->base + MTK_NOR_REG_PRG_CNT);
-	writel(MTK_NOR_UNLOCK_ALL, priv->base + MTK_NOR_REG_PRGDATA(5));
-	writel(MTK_NOR_IRQ_WRSR, priv->base + MTK_NOR_REG_IRQ_EN);
-	writel(MTK_NOR_CMD_WRSR, priv->base + MTK_NOR_REG_CMD);
-	ret = readl_poll_timeout(priv->base + MTK_NOR_REG_IRQ_STAT, reg,
-				 !(reg & MTK_NOR_IRQ_WRSR),
-				 ((3 * BITS_PER_BYTE) + 1) * 200);
 
 	return 0;
 }
