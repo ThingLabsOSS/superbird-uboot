@@ -104,9 +104,19 @@
 
 #define MTK_NOR_UNLOCK_ALL 0x0
 
+struct mtk_snor_caps {
+	/*
+	 * Some new SoCs modify the timing of fetching registers' values and IDs
+	 * of NOR flash, they need a extra_bit which can add more clock cycles
+	 * for fetching data.
+	 */
+	u8 extra_bit;
+};
+
 struct mtk_snor_priv {
 	struct device *dev;
 	void __iomem *base;
+	const struct mtk_snor_caps *caps;
 	u8 *buffer;
 	struct clk spi_clk;
 	struct clk ctlr_clk;
@@ -448,7 +458,11 @@ static int mtk_snor_cmd_program(struct mtk_snor_priv *priv,
 	}
 
 	/* trigger op */
-	writel(prg_len * BITS_PER_BYTE, priv->base + MTK_NOR_REG_PRG_CNT);
+	if (rx_len)
+		writel(prg_len * BITS_PER_BYTE + priv->caps->extra_bit,
+		       priv->base + MTK_NOR_REG_PRG_CNT);
+	else
+		writel(prg_len * BITS_PER_BYTE, priv->base + MTK_NOR_REG_PRG_CNT);
 
 	ret = mtk_snor_cmd_exec(priv, MTK_NOR_CMD_PROGRAM, prg_len * BITS_PER_BYTE);
 	if (ret)
@@ -507,6 +521,8 @@ static int mtk_snor_probe(struct udevice *bus)
 	priv->base = devfdt_get_addr_ptr(bus);
 	if (!priv->base)
 		return -EINVAL;
+
+	priv->caps = (const void *)dev_get_driver_data(bus);
 
 	ret = clk_get_by_name(bus, "spi", &priv->spi_clk);
 	if (ret < 0)
@@ -584,8 +600,19 @@ static const struct dm_spi_ops mtk_snor_ops = {
 	.set_mode = mtk_snor_set_mode,
 };
 
+static const struct mtk_snor_caps mtk_snor_caps_default = {
+	.extra_bit = 0,
+};
+
+static const struct mtk_snor_caps mtk_snor_caps_extra_bit = {
+	.extra_bit = 1,
+};
+
 static const struct udevice_id mtk_snor_ids[] = {
-	{ .compatible = "mediatek,mtk-snor" },
+	{ .compatible = "mediatek,mtk-snor", .data = (ulong)&mtk_snor_caps_default },
+	{ .compatible = "mediatek,mt8188-nor", .data = (ulong)&mtk_snor_caps_extra_bit },
+	{ .compatible = "mediatek,mt8189-nor", .data = (ulong)&mtk_snor_caps_extra_bit },
+	{ .compatible = "mediatek,mt8195-nor", .data = (ulong)&mtk_snor_caps_default },
 	{}
 };
 
