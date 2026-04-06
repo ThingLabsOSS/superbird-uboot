@@ -90,6 +90,7 @@
 #define MTK_NOR_REG_DMA_END_DADR 0x724
 
 #define MTK_NOR_PRG_MAX_SIZE 6
+#define MTK_NOR_PRG_CNT_MAX 56
 /* Reading DMA src/dst addresses have to be 16-byte aligned */
 #define MTK_NOR_DMA_ALIGN 16
 #define MTK_NOR_DMA_ALIGN_MASK (MTK_NOR_DMA_ALIGN - 1)
@@ -404,6 +405,16 @@ static int mtk_snor_cmd_program(struct mtk_snor_priv *priv,
 
 	prg_len = op->cmd.nbytes + op->addr.nbytes + op->dummy.nbytes +
 		  op->data.nbytes;
+
+	/*
+	 * An invalid op may reach here if the caller calls exec_op without
+	 * adjust_op_size. return -EINVAL instead of -ENOTSUPP so that
+	 * spi-mem won't try this op again with generic spi transfers.
+	 */
+	if ((tx_len > MTK_NOR_REG_PRGDATA_MAX + 1) ||
+	    (rx_len > MTK_NOR_REG_SHIFT_MAX + 1) ||
+	    (prg_len > MTK_NOR_PRG_CNT_MAX / 8))
+		return -EINVAL;
 
 	/* fill tx data */
 
