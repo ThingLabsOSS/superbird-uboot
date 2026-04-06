@@ -415,14 +415,16 @@ static int mtk_snor_cmd_program(struct mtk_snor_priv *priv,
 		writeb(val, reg);
 	}
 
-	for (i = 0; i < op->dummy.nbytes; i++, reg_offset--) {
-		reg = priv->base + MTK_NOR_REG_PRGDATA(reg_offset);
-		writeb(0, reg);
-	}
+	if (op->data.dir == SPI_MEM_DATA_OUT) {
+		for (i = 0; i < op->dummy.nbytes; i++, reg_offset--) {
+			reg = priv->base + MTK_NOR_REG_PRGDATA(reg_offset);
+			writeb(0, reg);
+		}
 
-	for (i = 0; i < op->data.nbytes; i++, reg_offset--) {
-		reg = priv->base + MTK_NOR_REG_PRGDATA(reg_offset);
-		writeb(((const u8 *)(op->data.buf.out))[i], reg);
+		for (i = 0; i < op->data.nbytes; i++, reg_offset--) {
+			reg = priv->base + MTK_NOR_REG_PRGDATA(reg_offset);
+			writeb(((const u8 *)(op->data.buf.out))[i], reg);
+		}
 	}
 
 	for (; reg_offset >= 0; reg_offset--) {
@@ -437,9 +439,11 @@ static int mtk_snor_cmd_program(struct mtk_snor_priv *priv,
 
 	/* fetch read data */
 	reg_offset = 0;
-	for (i = op->data.nbytes - 1; i >= 0; i--, reg_offset++) {
-		reg = priv->base + MTK_NOR_REG_SHIFT(reg_offset);
-		((u8 *)(op->data.buf.in))[i] = readb(reg);
+	if (op->data.dir == SPI_MEM_DATA_IN) {
+		for (i = op->data.nbytes - 1; i >= 0; i--, reg_offset++) {
+			reg = priv->base + MTK_NOR_REG_SHIFT(reg_offset);
+			((u8 *)(op->data.buf.in))[i] = readb(reg);
+		}
 	}
 
 	return 0;
