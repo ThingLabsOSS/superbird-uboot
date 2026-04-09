@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * MT6357 regulator driver
+ * MediaTek PMIC Wrapper driver
  *
  * Copyright (c) 2026 BayLibre, SAS.
  * Author: Julien Masson <jmasson@baylibre.com>
