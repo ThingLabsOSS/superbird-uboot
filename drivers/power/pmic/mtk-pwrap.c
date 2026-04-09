@@ -340,12 +340,6 @@ static int mt8365_regs[] = {
 	[PWRAP_WDT_SRC_EN_1] =		0xf8,
 };
 
-enum pwrap_type {
-	PWRAP_MT8188,
-	PWRAP_MT8189,
-	PWRAP_MT8365,
-};
-
 struct pwrap_slv_type {
 	const u32 *dew_regs;
 	u32 caps;
@@ -364,7 +358,6 @@ struct pmic_wrapper {
 
 struct pmic_wrapper_type {
 	int *regs;
-	enum pwrap_type type;
 	u32 arb_en_all;
 	u32 spi_w;
 	u32 wdt_src;
@@ -779,7 +772,6 @@ static int mtk_pwrap_bind(struct udevice *dev)
 	ofnode pmic_node, regulators_node;
 	int children;
 	const struct pmic_child_info *pmic_children_info;
-	struct pmic_wrapper_type *pw_type = (void *)dev_get_driver_data(dev);
 
 	pmic_node = dev_read_first_subnode(dev);
 	if (!ofnode_valid(pmic_node)) {
@@ -787,16 +779,13 @@ static int mtk_pwrap_bind(struct udevice *dev)
 		return -ENXIO;
 	}
 
-	switch (pw_type->type) {
-	case PWRAP_MT8365:
+	if (ofnode_device_is_compatible(pmic_node, "mediatek,mt6357")) {
 		pmic_children_info = mt6357_pmic_children_info;
-		break;
-	case PWRAP_MT8188:
-	case PWRAP_MT8189:
+	} else if (ofnode_device_is_compatible(pmic_node, "mediatek,mt6359")) {
 		pmic_children_info = mt6359_pmic_children_info;
-		break;
-	default:
-		dev_err(dev, "pwrap type %d not supported\n", pw_type->type);
+	} else {
+		dev_err(dev, "pmic type %s not supported\n",
+			ofnode_read_string(pmic_node, "compatible"));
 		return -ENXIO;
 	}
 
@@ -845,7 +834,6 @@ static struct dm_pmic_ops mtk_pwrap_ops = {
 
 static struct pmic_wrapper_type pwrap_mt8188 = {
 	.regs = mt8188_regs,
-	.type = PWRAP_MT8188,
 	.arb_en_all = 0x777f,
 	.spi_w = PWRAP_MAN_CMD_SPI_WRITE,
 	.wdt_src = PWRAP_WDT_SRC_MASK_ALL,
@@ -854,7 +842,6 @@ static struct pmic_wrapper_type pwrap_mt8188 = {
 
 static struct pmic_wrapper_type pwrap_mt8189 = {
 	.regs = mt8189_regs,
-	.type = PWRAP_MT8189,
 	.arb_en_all = 0x777f,
 	.spi_w = PWRAP_MAN_CMD_SPI_WRITE,
 	.wdt_src = PWRAP_WDT_SRC_MASK_ALL,
@@ -863,7 +850,6 @@ static struct pmic_wrapper_type pwrap_mt8189 = {
 
 static const struct pmic_wrapper_type pwrap_mt8365 = {
 	.regs = mt8365_regs,
-	.type = PWRAP_MT8365,
 	.arb_en_all = 0x3ffff,
 	.spi_w = PWRAP_MAN_CMD_SPI_WRITE,
 	.wdt_src = PWRAP_WDT_SRC_MASK_ALL,
