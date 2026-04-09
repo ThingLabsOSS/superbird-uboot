@@ -647,7 +647,7 @@ static const struct pwrap_slv_type pmic_mt6357 = {
 
 static const struct pwrap_slv_type pmic_mt6359 = {
 	.dew_regs = mt6359_regs,
-	.caps = PWRAP_SLV_CAP_DUALIO,
+	.caps = 0,
 };
 
 static const struct udevice_id mtk_pmic_ids[] = {
