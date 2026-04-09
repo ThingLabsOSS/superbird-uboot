@@ -59,7 +59,6 @@ static const struct pmic_child_info mt6359_pmic_children_info[] = {
 #define HAS_CAP(_c, _x_val)		(((_c) & (_x_val)) == (_x_val))
 
 /* Group of bits used for shown pwrap capability */
-#define PWRAP_CAP_INT1_EN		BIT(3)
 #define PWRAP_CAP_WDT_SRC		BIT(4)
 #define PWRAP_CAP_WDT_SRC1		BIT(5)
 #define PWRAP_CAP_ARB			BIT(6)
@@ -367,8 +366,6 @@ struct pmic_wrapper_type {
 	int *regs;
 	enum pwrap_type type;
 	u32 arb_en_all;
-	u32 int_en_all;
-	u32 int1_en_all;
 	u32 spi_w;
 	u32 wdt_src;
 	/* Flags indicating the capability for the target pwrap */
@@ -774,15 +771,6 @@ static int mtk_pwrap_probe(struct udevice *dev)
 	else
 		pwrap_writel(wrp, 0x1, PWRAP_TIMER_EN);
 
-	pwrap_writel(wrp, wrp->master->int_en_all, PWRAP_INT_EN);
-
-	/*
-	 * We add INT1 interrupt to handle starvation and request exception
-	 * If we support it, we should enable it here.
-	 */
-	if (HAS_CAP(wrp->master->caps, PWRAP_CAP_INT1_EN))
-		pwrap_writel(wrp, wrp->master->int1_en_all, PWRAP_INT1_EN);
-
 	return 0;
 }
 
@@ -859,18 +847,15 @@ static struct pmic_wrapper_type pwrap_mt8188 = {
 	.regs = mt8188_regs,
 	.type = PWRAP_MT8188,
 	.arb_en_all = 0x777f,
-	.int_en_all = 0x180000,
-	.int1_en_all = 0x0,
 	.spi_w = PWRAP_MAN_CMD_SPI_WRITE,
 	.wdt_src = PWRAP_WDT_SRC_MASK_ALL,
-	.caps = PWRAP_CAP_INT1_EN | PWRAP_CAP_ARB,
+	.caps = PWRAP_CAP_ARB,
 };
 
 static struct pmic_wrapper_type pwrap_mt8189 = {
 	.regs = mt8189_regs,
 	.type = PWRAP_MT8189,
 	.arb_en_all = 0x777f,
-	.int_en_all = 0x180000,
 	.spi_w = PWRAP_MAN_CMD_SPI_WRITE,
 	.wdt_src = PWRAP_WDT_SRC_MASK_ALL,
 	.caps = PWRAP_CAP_ARB,
@@ -880,11 +865,9 @@ static const struct pmic_wrapper_type pwrap_mt8365 = {
 	.regs = mt8365_regs,
 	.type = PWRAP_MT8365,
 	.arb_en_all = 0x3ffff,
-	.int_en_all = 0x7f1fffff,
-	.int1_en_all = 0x0,
 	.spi_w = PWRAP_MAN_CMD_SPI_WRITE,
 	.wdt_src = PWRAP_WDT_SRC_MASK_ALL,
-	.caps = PWRAP_CAP_INT1_EN | PWRAP_CAP_WDT_SRC1 | PWRAP_CAP_INIT,
+	.caps = PWRAP_CAP_WDT_SRC1 | PWRAP_CAP_INIT,
 };
 
 static const struct udevice_id mtk_pwrap_ids[] = {
