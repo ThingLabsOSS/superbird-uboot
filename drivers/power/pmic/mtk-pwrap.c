@@ -60,8 +60,9 @@ static const struct pmic_child_info mt6359_pmic_children_info[] = {
 
 /* Group of bits used for shown pwrap capability */
 #define PWRAP_CAP_INT1_EN		BIT(3)
-#define PWRAP_CAP_WDT_SRC1		BIT(4)
-#define PWRAP_CAP_ARB			BIT(5)
+#define PWRAP_CAP_WDT_SRC		BIT(4)
+#define PWRAP_CAP_WDT_SRC1		BIT(5)
+#define PWRAP_CAP_ARB			BIT(6)
 
 /* defines for slave device wrapper registers */
 enum dew_regs {
@@ -755,7 +756,8 @@ static int mtk_pwrap_probe(struct udevice *dev)
 	 * Since STAUPD was not used on mt8173 platform,
 	 * so STAUPD of WDT_SRC which should be turned off
 	 */
-	pwrap_writel(wrp, wrp->master->wdt_src, PWRAP_WDT_SRC_EN);
+	if (HAS_CAP(wrp->master->caps, PWRAP_CAP_WDT_SRC))
+		pwrap_writel(wrp, wrp->master->wdt_src, PWRAP_WDT_SRC_EN);
 
 	if (HAS_CAP(wrp->master->caps, PWRAP_CAP_WDT_SRC1))
 		pwrap_writel(wrp, wrp->master->wdt_src, PWRAP_WDT_SRC_EN_1);
