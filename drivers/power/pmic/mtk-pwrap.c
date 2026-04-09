@@ -63,6 +63,8 @@ static const struct pmic_child_info mt6359_pmic_children_info[] = {
 #define PWRAP_CAP_WDT_SRC		BIT(4)
 #define PWRAP_CAP_WDT_SRC1		BIT(5)
 #define PWRAP_CAP_ARB			BIT(6)
+/* To implement this capability, the registers used in pwrap_init() must be defined. */
+#define PWRAP_CAP_INIT			BIT(7)
 
 /* defines for slave device wrapper registers */
 enum dew_regs {
@@ -735,6 +737,11 @@ static int mtk_pwrap_probe(struct udevice *dev)
 	 * Skip initialization here in this case.
 	 */
 	if (!pwrap_readl(wrp, PWRAP_INIT_DONE2)) {
+		if (!HAS_CAP(wrp->master->caps, PWRAP_CAP_INIT)) {
+			dev_err(dev, "initialization is required but not supported\n");
+			return -EOPNOTSUPP;
+		}
+
 		ret = pwrap_init(wrp);
 		if (ret) {
 			dev_err(dev, "init failed with %d\n", ret);
@@ -877,7 +884,7 @@ static const struct pmic_wrapper_type pwrap_mt8365 = {
 	.int1_en_all = 0x0,
 	.spi_w = PWRAP_MAN_CMD_SPI_WRITE,
 	.wdt_src = PWRAP_WDT_SRC_MASK_ALL,
-	.caps = PWRAP_CAP_INT1_EN | PWRAP_CAP_WDT_SRC1,
+	.caps = PWRAP_CAP_INT1_EN | PWRAP_CAP_WDT_SRC1 | PWRAP_CAP_INIT,
 };
 
 static const struct udevice_id mtk_pwrap_ids[] = {
