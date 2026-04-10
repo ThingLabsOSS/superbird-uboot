@@ -69,10 +69,13 @@
 #define ZYNQ_GEM_NWCFG_SGMII_ENBL	0x08000000 /* SGMII Enable */
 #define ZYNQ_GEM_NWCFG_PCS_SEL		0x00000800 /* PCS select */
 
+#define ZYNQ_GEM_DBUS_WIDTH_MASK	(3 << 21) /* bits 22:21 */
 #ifdef CONFIG_ARM64
 # define ZYNQ_GEM_DBUS_WIDTH	(1 << 21) /* 64 bit bus */
+# define ZYNQ_GEM_DBUS_WIDTH_128	(2 << 21) /* 128 bit bus */
 #else
 # define ZYNQ_GEM_DBUS_WIDTH	(0 << 21) /* 32 bit bus */
+# define ZYNQ_GEM_DBUS_WIDTH_128	(0 << 21) /* 32 bit bus */
 #endif
 
 #define ZYNQ_GEM_NWCFG_INIT		(ZYNQ_GEM_DBUS_WIDTH | \
@@ -533,6 +536,8 @@ static int zynq_gem_init(struct udevice *dev)
 	nwconfig = ZYNQ_GEM_NWCFG_INIT;
 
 	if (device_is_compatible(dev, "amd,versal2-10gbe")) {
+		nwconfig &= ~ZYNQ_GEM_DBUS_WIDTH_MASK;
+		nwconfig |= ZYNQ_GEM_DBUS_WIDTH_128;
 		if (priv->interface == PHY_INTERFACE_MODE_10GBASER) {
 			ctrl = readl(&regs->nwcfg);
 			ctrl |= PCSSEL;
