@@ -134,6 +134,7 @@
 #define ZYNQ_GEM_FREQUENCY_10	2500000UL
 #define ZYNQ_GEM_FREQUENCY_100	25000000UL
 #define ZYNQ_GEM_FREQUENCY_1000	125000000UL
+#define ZYNQ_GEM_FREQUENCY_10000	150000000UL
 
 #define RXCLK_EN		BIT(0)
 
@@ -602,6 +603,9 @@ static int zynq_gem_init(struct udevice *dev)
 	}
 
 	switch (priv->phydev->speed) {
+	case SPEED_10000:
+		clk_rate = ZYNQ_GEM_FREQUENCY_10000;
+		break;
 	case SPEED_1000:
 		nwconfig |= ZYNQ_GEM_NWCFG_SPEED1000;
 		clk_rate = ZYNQ_GEM_FREQUENCY_1000;
