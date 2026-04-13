@@ -1,13 +1,14 @@
 # SPDX-License-Identifier:	GPL-2.0+
 # Copyright (c) 2013, Google Inc.
-#
-# Sanity check of the FIT handling in U-Boot
+
+"""Sanity check of the FIT handling in U-Boot"""
 
 import os
-import pytest
 import struct
-import utils
+
+import pytest
 import fit_util
+import utils
 
 # Define a base ITS which we can adjust using % and a dictionary
 base_its = '''
@@ -160,8 +161,8 @@ def test_fit_base(ubman):
         fname = make_fname(filename)
         data = ''
         for i in range(100):
-            data += '%s %d was seldom used in the middle ages\n' % (text, i)
-        with open(fname, 'w') as fd:
+            data += f'{text} {i} was seldom used in the middle ages\n'
+        with open(fname, 'w', encoding='ascii') as fd:
             print(data, file=fd)
         return fname
 
@@ -202,6 +203,7 @@ def test_fit_base(ubman):
                           'third_line:')
         '30'
         """
+        # pylint: disable=W0612
         __tracebackhide__ = True
         for line in '\n'.join(text).splitlines():
             pos = line.find(match)
@@ -209,6 +211,7 @@ def test_fit_base(ubman):
                 return line[:pos] + line[pos + len(match):]
 
         pytest.fail("Expected '%s' but not found in output")
+        return '<no-match>'
 
     def check_equal(expected_fname, actual_fname, failure_msg):
         """Check that a file matches its expected contents
