@@ -104,6 +104,7 @@ base_fdt = '''
 # then run the 'bootm' command, then save out memory from the places where
 # we expect 'bootm' to write things. Then quit.
 base_script = '''
+mw.b 0 0 160000
 host load hostfs 0 %(fit_addr)x %(fit)s
 fdt addr %(fit_addr)x
 bootm start %(fit_addr)x
@@ -260,7 +261,7 @@ def test_fit(ubman):
           - run code coverage to make sure we are testing all the code
         """
         # Set up invariant files
-        control_dtb = fit_util.make_dtb(ubman, base_fdt, 'u-boot')
+        fdt_data = fit_util.make_dtb(ubman, base_fdt, 'u-boot')
         kernel = fit_util.make_kernel(ubman, 'test-kernel.bin', 'kernel')
         ramdisk = make_ramdisk('test-ramdisk.bin', 'ramdisk')
         loadables1 = fit_util.make_kernel(ubman, 'test-loadables1.bin', 'lenrek')
@@ -284,7 +285,7 @@ def test_fit(ubman):
             'fdt' : fdt,
             'fdt_out' : fdt_out,
             'fdt_addr' : 0x80000,
-            'fdt_size' : filesize(control_dtb),
+            'fdt_size' : filesize(fdt_data),
             'fdt_load' : '',
 
             'ramdisk' : ramdisk,
@@ -317,12 +318,10 @@ def test_fit(ubman):
 
         # First check that we can load a kernel
         # We could perhaps reduce duplication with some loss of readability
-        ubman.config.dtb = control_dtb
-        ubman.restart_uboot()
         with ubman.log.section('Kernel load'):
             output = ubman.run_command_list(cmd.splitlines())
             check_equal(kernel, kernel_out, 'Kernel not loaded')
-            check_not_equal(control_dtb, fdt_out,
+            check_not_equal(fdt_data, fdt_out,
                             'FDT loaded but should be ignored')
             check_not_equal(ramdisk, ramdisk_out,
                             'Ramdisk loaded but should not be')
@@ -351,10 +350,9 @@ def test_fit(ubman):
         with ubman.log.section('Kernel + FDT load'):
             params['fdt_load'] = 'load = <%#x>;' % params['fdt_addr']
             fit = fit_util.make_fit(ubman, mkimage, base_its, params)
-            ubman.restart_uboot()
             output = ubman.run_command_list(cmd.splitlines())
             check_equal(kernel, kernel_out, 'Kernel not loaded')
-            check_equal(control_dtb, fdt_out, 'FDT not loaded')
+            check_equal(fdt_data, fdt_out, 'FDT not loaded')
             check_not_equal(ramdisk, ramdisk_out,
                             'Ramdisk loaded but should not be')
 
@@ -363,7 +361,6 @@ def test_fit(ubman):
             params['ramdisk_config'] = 'ramdisk = "ramdisk-1";'
             params['ramdisk_load'] = 'load = <%#x>;' % params['ramdisk_addr']
             fit = fit_util.make_fit(ubman, mkimage, base_its, params)
-            ubman.restart_uboot()
             output = ubman.run_command_list(cmd.splitlines())
             check_equal(ramdisk, ramdisk_out, 'Ramdisk not loaded')
 
@@ -375,7 +372,6 @@ def test_fit(ubman):
             params['loadables2_load'] = ('load = <%#x>;' %
                                          params['loadables2_addr'])
             fit = fit_util.make_fit(ubman, mkimage, base_its, params)
-            ubman.restart_uboot()
             output = ubman.run_command_list(cmd.splitlines())
             check_equal(loadables1, loadables1_out,
                         'Loadables1 (kernel) not loaded')
@@ -389,21 +385,12 @@ def test_fit(ubman):
             params['fdt'] = make_compressed(fdt)
             params['ramdisk'] = make_compressed(ramdisk)
             fit = fit_util.make_fit(ubman, mkimage, base_its, params)
-            ubman.restart_uboot()
             output = ubman.run_command_list(cmd.splitlines())
             check_equal(kernel, kernel_out, 'Kernel not loaded')
-            check_equal(control_dtb, fdt_out, 'FDT not loaded')
+            check_equal(fdt_data, fdt_out, 'FDT not loaded')
             check_not_equal(ramdisk, ramdisk_out, 'Ramdisk got decompressed?')
             check_equal(ramdisk + '.gz', ramdisk_out, 'Ramdist not loaded')
 
 
-    # We need to use our own device tree file. Remember to restore it
-    # afterwards.
-    old_dtb = ubman.config.dtb
-    try:
-        mkimage = ubman.config.build_dir + '/tools/mkimage'
-        run_fit_test(mkimage)
-    finally:
-        # Go back to the original U-Boot with the correct dtb.
-        ubman.config.dtb = old_dtb
-        ubman.restart_uboot()
+    mkimage = ubman.config.build_dir + '/tools/mkimage'
+    run_fit_test(mkimage)
