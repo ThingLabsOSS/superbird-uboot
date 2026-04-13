@@ -70,7 +70,7 @@ base_its = '''
         configurations {
                 default = "conf-1";
                 conf-1 {
-                        kernel = "kernel-1";
+                        %(kernel_config)s
                         fdt = "fdt-1";
                         %(ramdisk_config)s
                         %(loadables_config)s
@@ -281,6 +281,7 @@ def test_fit_base(ubman):
             'kernel_out' : kernel_out,
             'kernel_addr' : 0x40000,
             'kernel_size' : filesize(kernel),
+            'kernel_config' : 'kernel = "kernel-1";',
 
             'fdt' : fdt,
             'fdt_out' : fdt_out,
@@ -389,8 +390,16 @@ def test_fit_base(ubman):
             check_equal(kernel, kernel_out, 'Kernel not loaded')
             check_equal(fdt_data, fdt_out, 'FDT not loaded')
             check_not_equal(ramdisk, ramdisk_out, 'Ramdisk got decompressed?')
-            check_equal(ramdisk + '.gz', ramdisk_out, 'Ramdist not loaded')
+            check_equal(ramdisk + '.gz', ramdisk_out, 'Ramdisk not loaded')
 
+        # Try without a kernel
+        with ubman.log.section('No kernel + FDT'):
+            params['kernel_config'] = ''
+            params['ramdisk_config'] = ''
+            params['ramdisk_load'] = ''
+            fit = fit_util.make_fit(ubman, mkimage, base_its, params)
+            output = ubman.run_command_list(cmd.splitlines())
+            assert "can't get kernel image!" in '\n'.join(output)
 
     mkimage = ubman.config.build_dir + '/tools/mkimage'
     run_fit_test(mkimage)
