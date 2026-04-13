@@ -6,8 +6,9 @@
  */
 
 #include <ansi.h>
-#include <cli.h>
 #include <charset.h>
+#include <cli.h>
+#include <console.h>
 #include <efi_device_path.h>
 #include <efi_loader.h>
 #include <efi_load_initrd.h>
@@ -167,8 +168,7 @@ static void eficonfig_menu_adjust(struct efimenu *efi_menu, bool add)
 void eficonfig_print_msg(char *msg)
 {
 	/* Flush input */
-	while (tstc())
-		getchar();
+	console_flush_stdin();
 
 	printf(ANSI_CURSOR_HIDE
 	       ANSI_CLEAR_CONSOLE

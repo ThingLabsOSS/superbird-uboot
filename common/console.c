@@ -643,6 +643,15 @@ int tstc(void)
 	return serial_tstc();
 }
 
+/**
+ * console_flush_stdin() - drops all pending characters from stdin
+ */
+void console_flush_stdin(void)
+{
+	while (tstc())
+		(void)getchar();
+}
+
 #define PRE_CONSOLE_FLUSHPOINT1_SERIAL			0
 #define PRE_CONSOLE_FLUSHPOINT2_EVERYTHING_BUT_SERIAL	1
 
@@ -914,8 +923,7 @@ int confirm_yesno(void)
 	char str_input[5];
 
 	/* Flush input */
-	while (tstc())
-		getchar();
+	console_flush_stdin();
 	i = 0;
 	while (i < sizeof(str_input)) {
 		str_input[i] = getchar();
