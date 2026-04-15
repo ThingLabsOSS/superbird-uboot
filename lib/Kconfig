@@ -72,7 +72,7 @@ config DYNAMIC_CRC_TABLE
 	  This can be helpful when reducing the size of the build image
 
 config SUPPORTS_FW_LOADER
-	bool
+	def_bool y
 	depends on CMDLINE
 	depends on ENV_SUPPORT
 
