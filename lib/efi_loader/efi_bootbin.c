@@ -227,7 +227,7 @@ static efi_status_t efi_binary_run_dp(void *image, size_t size, void *fdt,
 	if (ret != EFI_SUCCESS) {
 		log_err("Error: Cannot initialize UEFI sub-system, r = %lu\n",
 			ret & ~EFI_ERROR_MASK);
-		return -1;
+		return ret;
 	}
 
 	ret = efi_install_fdt(fdt);
