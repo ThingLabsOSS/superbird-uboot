@@ -1636,6 +1636,8 @@ static int sqfs_read_nest(const char *filename, void *buf, loff_t offset,
 		*actread = finfo.size;
 	}
 
+	ret = 0;
+
 out:
 	free(fragment);
 	free(datablock);
