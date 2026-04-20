@@ -2,16 +2,21 @@
 # Network configuration
 #
 
-menu "Networking"
+config NO_NET
+	bool "Disable networking"
+	help
+	  Transitional variable. Equivalent to setting NET=n.
+
+menuconfig NET
+	bool "Networking"
+	depends on !NO_NET
+	default y
+
+if NET
 
 choice
 	prompt "Networking stack"
 	default NET_LEGACY
-
-config NO_NET
-	bool "No networking support"
-	help
-	  Do not include networking support
 
 config NET_LEGACY
 	bool "Legacy U-Boot networking stack"
@@ -231,8 +236,6 @@ endif   # if NET_LEGACY
 
 source "net/lwip/Kconfig"
 
-if NET_LEGACY || NET_LWIP
-
 config BOOTDEV_ETH
 	bool "Enable bootdev for ethernet"
 	depends on BOOTSTD
@@ -276,7 +279,7 @@ config TFTP_BLOCKSIZE
 	  almost-MTU block sizes.
 	  You can also activate CONFIG_IP_DEFRAG to set a larger block.
 
-endif   # if NET_LEGACY || NET_LWIP
+endif   # if NET
 
 config SYS_RX_ETH_BUFFER
         int "Number of receive packet buffers"
@@ -286,5 +289,3 @@ config SYS_RX_ETH_BUFFER
           controllers it is recommended to set this value to 8 or even higher,
           since all buffers can be full shortly after enabling the interface on
           high Ethernet traffic.
-
-endmenu
