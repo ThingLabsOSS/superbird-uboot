@@ -339,7 +339,7 @@ config ESSEDMA
 
 config ETH_SANDBOX
 	depends on SANDBOX
-	depends on NET_LEGACY || NET_LWIP
+	depends on NET
 	default y
 	bool "Sandbox: Mocked Ethernet driver"
 	help

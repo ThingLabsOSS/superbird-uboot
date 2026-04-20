@@ -37,7 +37,7 @@ CFLAGS_eth_common.o += -Wno-format-extra-args
 
 endif
 
-ifeq ($(filter y,$(CONFIG_NET_LEGACY) $(CONFIG_NET_LWIP)),y)
+ifeq ($(CONFIG_NET),y)
 obj-$(CONFIG_DM_DSA)   += dsa-uclass.o
 obj-$(CONFIG_$(PHASE_)DM_ETH) += eth-uclass.o
 obj-$(CONFIG_$(PHASE_)BOOTDEV_ETH) += eth_bootdev.o

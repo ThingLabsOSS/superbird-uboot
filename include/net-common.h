@@ -235,7 +235,7 @@ int eth_rx(void);			/* Check for received packets */
  */
 void reset_phy(void);
 
-#if CONFIG_IS_ENABLED(NET_LEGACY) || CONFIG_IS_ENABLED(NET_LWIP)
+#if CONFIG_IS_ENABLED(NET)
 /**
  * eth_set_enable_bootdevs() - Enable or disable binding of Ethernet bootdevs
  *
