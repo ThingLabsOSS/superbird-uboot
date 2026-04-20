@@ -631,6 +631,7 @@ static int zynq_gem_init(struct udevice *dev)
 		break;
 	}
 	nwcfg = readl(&regs->nwcfg);
+	nwcfg &= ~(ZYNQ_GEM_NWCFG_SPEED100 | ZYNQ_GEM_NWCFG_SPEED1000);
 	nwcfg |= nwconfig;
 	if (nwcfg)
 		writel(nwcfg, &regs->nwcfg);
