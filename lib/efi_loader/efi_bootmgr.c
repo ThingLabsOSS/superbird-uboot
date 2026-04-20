@@ -1313,7 +1313,7 @@ efi_status_t efi_bootmgr_run(void *fdt)
 	if (ret != EFI_SUCCESS) {
 		log_err("Error: Cannot initialize UEFI sub-system, r = %lu\n",
 			ret & ~EFI_ERROR_MASK);
-		return CMD_RET_FAILURE;
+		return ret;
 	}
 
 	ret = efi_bootmgr_load(&handle, &load_options);
