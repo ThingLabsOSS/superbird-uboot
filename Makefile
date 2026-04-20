@@ -1081,7 +1081,7 @@ libs-$(CONFIG_OF_EMBED) += dts/
 libs-y += env/
 libs-y += lib/
 libs-y += fs/
-libs-$(filter y,$(CONFIG_NET) $(CONFIG_NET_LWIP)) += net/
+libs-$(filter y,$(CONFIG_NET_LEGACY) $(CONFIG_NET_LWIP)) += net/
 libs-y += disk/
 libs-y += drivers/
 libs-$(CONFIG_SYS_FSL_DDR) += drivers/ddr/fsl/
@@ -1373,7 +1373,7 @@ expect = $(foreach cfg,$(1),y)
 # 1: List of options to migrate to (e.g. "CONFIG_DM_MMC CONFIG_BLK")
 # 2: Name of component (e.g . "Ethernet drivers")
 # 3: Release deadline (e.g. "v202.07")
-# 4: Condition to require before checking (e.g. "$(CONFIG_NET)")
+# 4: Condition to require before checking (e.g. "$(CONFIG_NET_LEGACY)")
 # Note: Script avoids bash construct, hence the strange double 'if'
 # (patches welcome!)
 define deprecated

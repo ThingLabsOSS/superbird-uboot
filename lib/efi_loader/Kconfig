@@ -517,7 +517,7 @@ config EFI_RISCV_BOOT_PROTOCOL
 config EFI_IP4_CONFIG2_PROTOCOL
 	bool "EFI_IP4_CONFIG2_PROTOCOL support"
 	default y if ARCH_QEMU || SANDBOX
-	depends on NET || NET_LWIP
+	depends on NET_LEGACY || NET_LWIP
 	help
 	  Provides an implementation of the EFI_IP4_CONFIG2_PROTOCOL, this
 	  protocol can be used to set and get the current ip address and
@@ -599,7 +599,7 @@ config EFI_BOOTMGR
 
 config EFI_HTTP_BOOT
 	bool "EFI HTTP Boot support"
-	depends on NET || NET_LWIP
+	depends on NET_LEGACY || NET_LWIP
 	select CMD_NET
 	select CMD_DHCP
 	select CMD_DNS

@@ -285,7 +285,7 @@ config PANIC_HANG
 
 config REGEX
 	bool "Enable regular expression support"
-	default y if NET
+	default y if NET_LEGACY
 	help
 	  If this variable is defined, U-Boot is linked against the
 	  SLRE (Super Light Regular Expression) library, which adds

@@ -422,7 +422,7 @@ includes the full set of commands, more error messages when things go wrong and
 bootmeth ordering with the bootmeths environment variable.
 
 You should probably also enable `CONFIG_BOOTSTD_DEFAULTS`, which provides
-several filesystem and network features (if `CONFIG_NET` is enabled) so that
+several filesystem and network features (if `CONFIG_NET_LEGACY` is enabled) so that
 a good selection of boot options is available.
 
 Some devicetree properties are supported in the bootstd node when

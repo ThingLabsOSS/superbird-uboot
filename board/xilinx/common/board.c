@@ -508,7 +508,7 @@ int board_late_init_xilinx(void)
 				ret |= env_set_by_index("uuid", id, uuid);
 			}
 
-			if (!(CONFIG_IS_ENABLED(NET) ||
+			if (!(CONFIG_IS_ENABLED(NET_LEGACY) ||
 			      CONFIG_IS_ENABLED(NET_LWIP)))
 				continue;
 

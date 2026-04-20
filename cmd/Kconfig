@@ -1946,7 +1946,7 @@ config CMD_XXD
 
 endmenu
 
-if NET || NET_LWIP
+if NET_LEGACY || NET_LWIP
 
 menuconfig CMD_NET
 	bool "Network commands"
@@ -1954,7 +1954,7 @@ menuconfig CMD_NET
 
 if CMD_NET
 
-if NET
+if NET_LEGACY
 
 config CMD_BOOTP
 	bool "bootp"
@@ -2198,12 +2198,12 @@ config CMD_WOL
 	help
 	  Wait for wake-on-lan Magic Packet
 
-endif  # if NET
+endif  # if NET_LEGACY
 
 config CMD_DHCP
 	bool "dhcp"
 	select PROT_DHCP_LWIP if NET_LWIP
-	select CMD_BOOTP if NET
+	select CMD_BOOTP if NET_LEGACY
 	help
 	  Boot image via network using DHCP/TFTP protocol
 
@@ -2259,7 +2259,7 @@ config CMD_PING
 
 config CMD_SNTP
 	bool "sntp"
-	select PROT_UDP if NET
+	select PROT_UDP if NET_LEGACY
 	select PROT_UDP_LWIP if NET_LWIP
 	help
 	  Synchronize RTC via network
@@ -2329,7 +2329,7 @@ config CMD_PXE
 
 endif  # if CMD_NET
 
-endif # NET || NET_LWIP
+endif # NET_LEGACY || NET_LWIP
 
 menu "Misc commands"
 

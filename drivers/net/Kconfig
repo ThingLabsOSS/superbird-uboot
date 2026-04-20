@@ -339,7 +339,7 @@ config ESSEDMA
 
 config ETH_SANDBOX
 	depends on SANDBOX
-	depends on NET || NET_LWIP
+	depends on NET_LEGACY || NET_LWIP
 	default y
 	bool "Sandbox: Mocked Ethernet driver"
 	help
@@ -350,7 +350,7 @@ config ETH_SANDBOX
 
 config ETH_SANDBOX_RAW
 	depends on SANDBOX
-	depends on NET
+	depends on NET_LEGACY
 	default y
 	bool "Sandbox: Bridge to Linux Raw Sockets"
 	help
@@ -476,7 +476,7 @@ config FTMAC100
 config FTGMAC100
 	bool "Ftgmac100 Ethernet Support"
 	select PHYLIB
-	depends on NET
+	depends on NET_LEGACY
 	help
 	  This driver supports the Faraday's FTGMAC100 Gigabit SoC
 	  Ethernet controller that can be found on Aspeed SoCs (which

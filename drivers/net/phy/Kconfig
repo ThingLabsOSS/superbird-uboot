@@ -7,7 +7,7 @@ config MV88E6352_SWITCH
 
 menuconfig PHYLIB
 	bool "Ethernet PHY (physical media interface) support"
-	depends on NET || NET_LWIP
+	depends on NET_LEGACY || NET_LWIP
 	help
 	  Enable Ethernet PHY (physical media interface) support.
 
@@ -381,7 +381,7 @@ config PHY_FIXED
 
 config PHY_NCSI
 	bool "NC-SI based PHY"
-	depends on NET
+	depends on NET_LEGACY
 
 endif #PHYLIB
 
