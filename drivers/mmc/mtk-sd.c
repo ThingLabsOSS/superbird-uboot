@@ -1983,6 +1983,7 @@ static const struct msdc_compatible mt8189_compat = {
 	.clk_div_bits = 12,
 	.pad_tune0 = true,
 	.async_fifo = true,
+	.async_fifo_crcsts = true,
 	.data_tune = true,
 	.busy_check = true,
 	.stop_clk_fix = true,
