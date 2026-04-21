@@ -1987,6 +1987,7 @@ static const struct msdc_compatible mt8189_compat = {
 	.busy_check = true,
 	.stop_clk_fix = true,
 	.enhance_rx = true,
+	.use_dma_mode = true,
 };
 
 static const struct udevice_id msdc_ids[] = {
