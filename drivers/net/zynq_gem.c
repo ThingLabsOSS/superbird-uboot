@@ -69,10 +69,13 @@
 #define ZYNQ_GEM_NWCFG_SGMII_ENBL	0x08000000 /* SGMII Enable */
 #define ZYNQ_GEM_NWCFG_PCS_SEL		0x00000800 /* PCS select */
 
+#define ZYNQ_GEM_DBUS_WIDTH_MASK	(3 << 21) /* bits 22:21 */
 #ifdef CONFIG_ARM64
 # define ZYNQ_GEM_DBUS_WIDTH	(1 << 21) /* 64 bit bus */
+# define ZYNQ_GEM_DBUS_WIDTH_128	(2 << 21) /* 128 bit bus */
 #else
 # define ZYNQ_GEM_DBUS_WIDTH	(0 << 21) /* 32 bit bus */
+# define ZYNQ_GEM_DBUS_WIDTH_128	(0 << 21) /* 32 bit bus */
 #endif
 
 #define ZYNQ_GEM_NWCFG_INIT		(ZYNQ_GEM_DBUS_WIDTH | \
@@ -134,6 +137,7 @@
 #define ZYNQ_GEM_FREQUENCY_10	2500000UL
 #define ZYNQ_GEM_FREQUENCY_100	25000000UL
 #define ZYNQ_GEM_FREQUENCY_1000	125000000UL
+#define ZYNQ_GEM_FREQUENCY_10000	150000000UL
 
 #define RXCLK_EN		BIT(0)
 
@@ -470,28 +474,6 @@ static int zynq_gem_init(struct udevice *dev)
 		for (i = 0; i < STAT_SIZE; i++)
 			readl(&regs->stat[i]);
 
-		/* Setup RxBD space */
-		memset(priv->rx_bd, 0, RX_BUF * sizeof(struct emac_bd));
-
-		for (i = 0; i < RX_BUF; i++) {
-			priv->rx_bd[i].status = 0xF0000000;
-			priv->rx_bd[i].addr =
-					(lower_32_bits((ulong)(priv->rxbuffers)
-							+ (i * PKTSIZE_ALIGN)));
-#if defined(CONFIG_PHYS_64BIT)
-			priv->rx_bd[i].addr_hi =
-					(upper_32_bits((ulong)(priv->rxbuffers)
-							+ (i * PKTSIZE_ALIGN)));
-#endif
-	}
-		/* WRAP bit to last BD */
-		priv->rx_bd[--i].addr |= ZYNQ_GEM_RXBUF_WRAP_MASK;
-		/* Write RxBDs to IP */
-		writel(lower_32_bits((ulong)priv->rx_bd), &regs->rxqbase);
-#if defined(CONFIG_PHYS_64BIT)
-		writel(upper_32_bits((ulong)priv->rx_bd), &regs->upper_rxqbase);
-#endif
-
 		/* Setup for DMA Configuration register */
 		writel(ZYNQ_GEM_DMACR_INIT, &regs->dmacr);
 
@@ -520,6 +502,35 @@ static int zynq_gem_init(struct udevice *dev)
 		priv->init++;
 	}
 
+	/*
+	 * Reinitialize RX BDs on every init. The 10GBE USX block asserts
+	 * RX_SYNC_RESET during setup which resets the GEM RX DMA pointer
+	 * back to rxqbase, so BDs and rxqbase must be refreshed each time
+	 * to keep the hardware and driver ring indices in sync.
+	 */
+	priv->rxbd_current = 0;
+	priv->rx_first_buf = 0;
+	memset(priv->rx_bd, 0, RX_BUF * sizeof(struct emac_bd));
+	for (i = 0; i < RX_BUF; i++) {
+		priv->rx_bd[i].status = 0xF0000000;
+		priv->rx_bd[i].addr =
+				(lower_32_bits((ulong)(priv->rxbuffers)
+						+ (i * PKTSIZE_ALIGN)));
+#if defined(CONFIG_PHYS_64BIT)
+		priv->rx_bd[i].addr_hi =
+				(upper_32_bits((ulong)(priv->rxbuffers)
+						+ (i * PKTSIZE_ALIGN)));
+#endif
+	}
+	/* WRAP bit to last BD */
+	priv->rx_bd[--i].addr |= ZYNQ_GEM_RXBUF_WRAP_MASK;
+
+	/* Write RxBDs to IP */
+	writel(lower_32_bits((ulong)priv->rx_bd), &regs->rxqbase);
+#if defined(CONFIG_PHYS_64BIT)
+	writel(upper_32_bits((ulong)priv->rx_bd), &regs->upper_rxqbase);
+#endif
+
 	ret = phy_startup(priv->phydev);
 	if (ret)
 		return ret;
@@ -532,6 +543,8 @@ static int zynq_gem_init(struct udevice *dev)
 	nwconfig = ZYNQ_GEM_NWCFG_INIT;
 
 	if (device_is_compatible(dev, "amd,versal2-10gbe")) {
+		nwconfig &= ~ZYNQ_GEM_DBUS_WIDTH_MASK;
+		nwconfig |= ZYNQ_GEM_DBUS_WIDTH_128;
 		if (priv->interface == PHY_INTERFACE_MODE_10GBASER) {
 			ctrl = readl(&regs->nwcfg);
 			ctrl |= PCSSEL;
@@ -602,6 +615,9 @@ static int zynq_gem_init(struct udevice *dev)
 	}
 
 	switch (priv->phydev->speed) {
+	case SPEED_10000:
+		clk_rate = ZYNQ_GEM_FREQUENCY_10000;
+		break;
 	case SPEED_1000:
 		nwconfig |= ZYNQ_GEM_NWCFG_SPEED1000;
 		clk_rate = ZYNQ_GEM_FREQUENCY_1000;
@@ -615,6 +631,7 @@ static int zynq_gem_init(struct udevice *dev)
 		break;
 	}
 	nwcfg = readl(&regs->nwcfg);
+	nwcfg &= ~(ZYNQ_GEM_NWCFG_SPEED100 | ZYNQ_GEM_NWCFG_SPEED1000);
 	nwcfg |= nwconfig;
 	if (nwcfg)
 		writel(nwcfg, &regs->nwcfg);
