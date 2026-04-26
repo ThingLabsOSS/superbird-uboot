@@ -475,7 +475,7 @@ F:	configs/eDPU_defconfig
 F:	configs/uDPU_defconfig
 
 ARM MICROCHIP/ATMEL AT91
-M:	Eugen Hristev <eugen.hristev@microchip.com>
+M:	Eugen Hristev <ehristev@kernel.org>
 S:	Maintained
 T:	git https://source.denx.de/u-boot/custodians/u-boot-at91.git
 F:	arch/arm/dts/at91*
