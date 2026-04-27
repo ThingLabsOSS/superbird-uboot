@@ -3,7 +3,7 @@
  * Copyright (C) 2025 Toradex - https://www.toradex.com/
  */
 
-#define SPL_BOARD_DTB "spl/dts/k3-am69-aquila-dev.dtb"
+#define SPL_BOARD_DTB "spl/dts/ti/k3-am69-aquila-dev.dtb"
 #define BOARD_DESCRIPTION "k3-am69-aquila"
 #define UBOOT_BOARD_DESCRIPTION "U-Boot for AM69 Aquila board"
 
