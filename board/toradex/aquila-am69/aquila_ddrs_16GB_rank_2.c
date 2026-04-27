@@ -14,7 +14,7 @@
 #include <linux/kernel.h>
 #include "ddrs_patch.h"
 
-#define DDRSS_PLL_FHS_CNT 3
+#define DDRSS_PLL_FHS_CNT 5
 
 #define DDRSS_CTL_268_DATA 0x01010000
 #define DDRSS_CTL_270_DATA 0x00000FFF
