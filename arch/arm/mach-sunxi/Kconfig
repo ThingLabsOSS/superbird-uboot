@@ -151,7 +151,6 @@ config DRAM_SUNXI_TPR3
 
 config DRAM_SUNXI_TPR6
 	hex "DRAM TPR6 parameter"
-	default 0x3300c080
 	help
 	  TPR6 value from vendor DRAM settings.
 
