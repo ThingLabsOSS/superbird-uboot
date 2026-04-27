@@ -1151,7 +1151,7 @@ config SPL_DM_SPI_FLASH
 
 config SPL_NET
 	bool "Support networking"
-	depends on NET
+	depends on NET_LEGACY
 	select SPL_USE_TINY_PRINTF_POINTER_SUPPORT if SPL_USE_TINY_PRINTF
 	help
 	  Enable support for network devices (such as Ethernet) in SPL.
@@ -1159,6 +1159,9 @@ config SPL_NET
 	  from an on-board peripheral. Environment support is required since
 	  the network stack uses a number of environment variables. See also
 	  SPL_ETH.
+
+config SPL_NET_LEGACY
+	def_bool y if SPL_NET
 
 config SPL_NET_VCI_STRING
 	string "BOOTP Vendor Class Identifier string sent by SPL"

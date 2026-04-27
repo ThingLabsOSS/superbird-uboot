@@ -431,12 +431,12 @@ config BOOT_DEFAULTS_CMDS
 	select CMD_FAT
 	select CMD_FS_GENERIC
 	select CMD_PART if PARTITIONS
-	select CMD_DHCP if CMD_NET && !NO_NET
-	select CMD_PING if CMD_NET && !NO_NET
-	select CMD_PXE if CMD_NET && !NO_NET
+	select CMD_DHCP if CMD_NET && NET
+	select CMD_PING if CMD_NET && NET
+	select CMD_PXE if CMD_NET && NET
 	select CMD_BOOTI if ARM64 && LMB
 	select CMD_BOOTZ if ARM && !ARM64 && LMB
-	imply CMD_MII if CMD_NET && !NO_NET
+	imply CMD_MII if CMD_NET && NET
 
 config BOOT_DEFAULTS
 	bool  # Common defaults for standard boot and distroboot
