@@ -1,4 +1,3 @@
 #include <configs/mt8195.config>
 
 CONFIG_DEFAULT_DEVICE_TREE="mediatek/mt8395-genio-1200-evk"
-CONFIG_IDENT_STRING="mt8395-genio-1200-evk"
