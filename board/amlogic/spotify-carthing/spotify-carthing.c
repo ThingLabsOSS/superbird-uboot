@@ -7,11 +7,16 @@
 #include <env.h>
 #include <command.h>
 #include <backlight.h>
+#include <blk.h>
 #include <button.h>
 #include <console.h>
 #include <dm.h>
 #include <dm/uclass.h>
 #include <fastboot.h>
+#include <fs.h>
+#include <part.h>
+#include <video.h>
+#include <mapmem.h>
 #include <asm/arch/boot.h>
 #include <asm/arch/sm.h>
 #include <asm/io.h>
@@ -323,6 +328,125 @@ static void detect_maskrom_failed(int boot_device)
 	}
 }
 
+/*
+ * Custom boot logo from the OS partitions.
+ *
+ * By default u-boot's video uclass auto-paints a baked-in splash (the
+ * BMP linked in as __splash_u_boot_logo_begin) during the UCLASS_VIDEO
+ * probe. We override that: if an OS slot ships its own /logo.bmp in its
+ * boot_<slot> filesystem, paint that instead — so a slot can carry its
+ * own branding without reflashing u-boot. Falls back to the baked-in
+ * logo when neither slot has a valid one.
+ *
+ * Slot order: the active slot (slot_active, default 'a' — same rule as
+ * do_ab_boot) is tried first, then the other slot. First valid BMP wins.
+ * This runs from the misc_init_r video probe, BEFORE ab_boot picks a
+ * slot, but slot_active is just an env var so we resolve it ourselves.
+ * Cost is one eMMC + FS read (~tens of ms for a few-hundred-KB BMP).
+ *
+ * 16/24/32bpp BMP support is enabled in the defconfig so a normal
+ * full-colour BMP works; without those the uclass only renders 8bpp
+ * palette images and a colour logo would be rejected by
+ * video_bmp_display(). Skipped entirely under quick_boot=1 (the panel
+ * isn't probed on that path).
+ */
+#define CARTHING_LOGO_PATH	"/logo.bmp"
+/*
+ * Scratch load address for the BMP. The kernel_addr_r region is free at
+ * misc_init_r time (no kernel loaded yet) and video_bmp_display() copies
+ * the pixels straight into the framebuffer, so this buffer is transient.
+ */
+#define CARTHING_LOGO_LOADADDR	0x08080000UL
+/* Cap the read so a bogus oversized logo.bmp can't run off into DRAM.
+ * A full-panel 800x480 32bpp BMP is ~1.5 MB; 4 MB is comfortable slack. */
+#define CARTHING_LOGO_MAX	(4 * 1024 * 1024)
+
+/*
+ * Paint a BMP at `data`, mirroring video-uclass.c show_splash(): a
+ * full-panel image is drawn corner-aligned at (0,0); anything smaller
+ * keeps the default top-left logo placement. Returns 0 if painted.
+ */
+static int carthing_paint_bmp(struct udevice *dev, u8 *data)
+{
+	struct video_priv *priv = dev_get_uclass_priv(dev);
+	ulong bmp_w = 0, bmp_h = 0;
+	uint bmp_bpix;
+	int x = -4, y = 4;
+	bool align = true;
+
+	if (!(data[0] == 'B' && data[1] == 'M'))
+		return -EINVAL;
+
+	video_bmp_get_info(data, &bmp_w, &bmp_h, &bmp_bpix);
+	if (bmp_w == priv->xsize && bmp_h == priv->ysize) {
+		x = 0;
+		y = 0;
+		align = false;
+	}
+
+	return video_bmp_display(dev, map_to_sysmem(data), x, y, align);
+}
+
+/*
+ * Load CARTHING_LOGO_PATH from boot_<slot>'s filesystem into `buf`.
+ * Returns the byte count on success, <=0 if the partition, filesystem
+ * or file is absent.
+ */
+static int carthing_load_slot_logo(char slot, u8 *buf)
+{
+	struct blk_desc *desc;
+	struct disk_partition info;
+	char partname[8], devpart[8];
+	loff_t actread = 0;
+	int part;
+
+	desc = blk_get_dev("mmc", 0);
+	if (!desc)
+		return -1;
+
+	snprintf(partname, sizeof(partname), "boot_%c", slot);
+	part = part_get_info_by_name(desc, partname, &info);
+	if (part < 1)
+		return -1;
+
+	/* fs_read consumes the blk dev selection, so set it each call. */
+	snprintf(devpart, sizeof(devpart), "0:%d", part);
+	if (fs_set_blk_dev("mmc", devpart, FS_TYPE_ANY))
+		return -1;
+
+	if (fs_read(CARTHING_LOGO_PATH, map_to_sysmem(buf), 0,
+		    CARTHING_LOGO_MAX, &actread))
+		return -1;
+
+	return (int)actread;
+}
+
+/*
+ * Paint the boot splash: prefer a partition-supplied /logo.bmp (active
+ * slot first, then the other), else the baked-in logo.
+ */
+static void carthing_show_splash(struct udevice *dev)
+{
+	const char *active = env_get("slot_active");
+	char slot = (active && active[0] == 'b' && active[1] == '\0') ? 'b' : 'a';
+	char order[2] = { slot, (slot == 'a') ? 'b' : 'a' };
+	u8 *buf = (u8 *)CARTHING_LOGO_LOADADDR;
+	int i, n;
+
+	for (i = 0; i < 2; i++) {
+		n = carthing_load_slot_logo(order[i], buf);
+		if (n > 2 && buf[0] == 'B' && buf[1] == 'M' &&
+		    !carthing_paint_bmp(dev, buf)) {
+			printf("Splash: custom logo from boot_%c (%d bytes)\n",
+			       order[i], n);
+			return;
+		}
+	}
+
+	/* No usable partition logo — paint the baked-in one. */
+	carthing_paint_bmp(dev, video_get_u_boot_logo());
+}
+
 int misc_init_r(void)
 {
 	set_serial_from_efuse();
@@ -352,7 +476,14 @@ int misc_init_r(void)
 	 * device always looks "alive" within ~100 ms of power-on. */
 	if (env_get_yesno("quick_boot") != 1) {
 		struct udevice *dev;
-		(void)uclass_first_device_err(UCLASS_VIDEO, &dev);
+
+		/* The probe auto-paints the baked-in logo (show_splash in
+		 * video-uclass.c). Immediately overpaint with a slot's
+		 * /logo.bmp if it has one — same draw coords as the baked-in
+		 * logo, so it covers cleanly, and the panel hasn't synced a
+		 * frame yet so the baked-in one isn't actually shown. */
+		if (!uclass_first_device_err(UCLASS_VIDEO, &dev))
+			carthing_show_splash(dev);
 	}
 	apply_saved_brightness();
 	/* Run the boot router BEFORE autoboot fires bootcmd. This is the
