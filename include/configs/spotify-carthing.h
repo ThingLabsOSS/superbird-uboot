@@ -35,6 +35,19 @@
 	 * between kernel_addr_r and ramdisk_addr_r on the 512 MiB part. */    \
 	"kernel_comp_addr_r=0x0a000000\0" \
 	"kernel_comp_size=0x4000000\0" \
+	/* Boot scratch/load addresses. meson64.h defines these, but the      \
+	 * CFG_EXTRA_ENV_SETTINGS override above drops them, so the compiled   \
+	 * default (no-saved-env) env lacks them — a blank/reset env then      \
+	 * can't sysboot (scriptaddr) or booti (kernel/fdt/ramdisk). Restore   \
+	 * by macro (no magic numbers, no drift). Deliberately NOT pulling in  \
+	 * BOOTENV / dfu_alt_info / fdtfile — the board uses ab_boot/boot_check,\
+	 * not distro_bootcmd, and extlinux.conf names its own FDT. */         \
+	"kernel_addr_r="     KERNEL_ADDR_R     "\0" \
+	"fdt_addr_r="        FDT_ADDR_R        "\0" \
+	"scriptaddr="        SCRIPT_ADDR_R     "\0" \
+	"pxefile_addr_r="    PXEFILE_ADDR_R    "\0" \
+	"fdtoverlay_addr_r=" FDTOVERLAY_ADDR_R "\0" \
+	"ramdisk_addr_r="    RAMDISK_ADDR_R    "\0" \
 	"show_console=setenv stdout serial,vidconsole;" \
 	             "setenv stderr serial,vidconsole;" \
 	             "cls\0" \
