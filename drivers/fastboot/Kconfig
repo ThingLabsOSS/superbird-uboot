@@ -285,12 +285,33 @@ config FASTBOOT_CMD_OEM_CONSOLE
 	  Add support for the "oem console" command to input and read console
 	  record buffer.
 
+config FASTBOOT_CMD_OEM_MASKROM
+	bool "Enable the 'oem maskrom' command"
+	help
+	  Add support for the "oem maskrom" command, which reboots the device
+	  into mask-ROM USB download mode. Relies on a board
+	  fastboot_set_reboot_flag that handles FASTBOOT_REBOOT_REASON_MASKROM
+	  (e.g. the Amlogic Car Thing, where BL31 reads the reason on the PSCI
+	  reset and asks the SCP to enter USB download). Acks OKAY, then reboots.
+
 config FASTBOOT_OEM_BOARD
 	bool "Enable the 'oem board' command"
 	help
 	  This extends the fastboot protocol with an "oem board" command. This
 	  command allows running vendor custom code defined in board/ files.
 	  Otherwise, it will do nothing and send fastboot fail.
+
+config FASTBOOT_CMD_FETCH
+	bool "Enable the 'fetch' command"
+	depends on FASTBOOT_FLASH_MMC
+	help
+	  Add support for AOSP's "fastboot fetch" command, the read-back
+	  counterpart to "fastboot flash". Streams up to
+	  CONFIG_FASTBOOT_BUF_SIZE bytes of a partition (or raw LBA range,
+	  via the fastboot_raw_partition_<name> env shorthand) back to the
+	  host over the bulk-IN endpoint. Syntax mirrors the host client:
+	    fastboot fetch <partition> <out_file>
+	    fastboot fetch <partition>:<offset_hex>:<size_hex> <out_file>
 
 endif # FASTBOOT
 

@@ -1,0 +1,40 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * U-Boot overlay for Spotify Car Thing -- shares the standard G12A
+ * adjustments (bootph-all on soc, vpu register fixups, etc.).
+ */
+
+#include "meson-g12-common-u-boot.dtsi"
+
+/*
+ * The upstream DT references CLKID_MIPI_DSI_PXCLK_SEL / _CTS_ENCL_SEL /
+ * _VCLK2_SEL etc. via `clocks` / `assigned-clocks` on mipi_dsi. u-boot's
+ * drivers/clk/meson/g12a.c doesn't implement those gates, so the generic
+ * clk_set_defaults() invoked by device_probe() before drv->probe() ends
+ * up returning -ENOENT and our wrapper never gets to run.
+ *
+ * Drop the clock references entirely for u-boot — the wrapper writes the
+ * HHI registers directly (see meson_dw_mipi_dsi.c clock setup notes), so
+ * the framework-managed clocks aren't load-bearing here.
+ */
+&mipi_dsi {
+	/delete-property/ clocks;
+	/delete-property/ clock-names;
+	/delete-property/ assigned-clocks;
+	/delete-property/ assigned-clock-parents;
+};
+
+/*
+ * Upstream DT names the EE PWM controllers `amlogic,meson-g12-pwm-v2` which
+ * the u-boot pwm-meson driver doesn't know. Add the legacy compat so the
+ * driver binds. The HW programming model is the same for our use case.
+ */
+&pwm_ef {
+	compatible = "amlogic,meson-g12a-ee-pwm";
+};
+&pwm_cd {
+	compatible = "amlogic,meson-g12a-ee-pwm";
+};
+&pwm_ab {
+	compatible = "amlogic,meson-g12a-ee-pwm";
+};

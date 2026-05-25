@@ -29,4 +29,13 @@ int fsg_init(struct ums *ums_devs, int count, struct udevice *udc);
 void fsg_cleanup(void);
 int fsg_main_thread(void *);
 int fsg_add(struct usb_configuration *c);
+
+/*
+ * Board hook for exiting the UMS loop without UART access. Default is
+ * a no-op (in cmd/usb_mass_storage.c); boards can override to poll a
+ * physical button and return non-zero to request shutdown. Polled from
+ * both the outer ums command loop AND the inner sleep_thread, so it
+ * stays responsive even when the gadget is idle waiting for host I/O.
+ */
+int ums_board_abort_check(void);
 #endif /* __USB_MASS_STORAGE_H__ */

@@ -1,0 +1,7 @@
+SPOTIFY CARTHING
+S:	Orphan
+F:	board/amlogic/spotify-carthing/
+F:	configs/spotify_carthing_defconfig
+F:	include/configs/spotify-carthing.h
+F:	dts/upstream/src/arm64/amlogic/meson-g12a-spotify-carthing.dts
+F:	arch/arm/dts/meson-g12a-spotify-carthing-u-boot.dtsi

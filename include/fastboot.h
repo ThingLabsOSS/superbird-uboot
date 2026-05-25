@@ -50,7 +50,10 @@ enum {
 	FASTBOOT_COMMAND_OEM_BOOTBUS,
 	FASTBOOT_COMMAND_OEM_RUN,
 	FASTBOOT_COMMAND_OEM_CONSOLE,
+	FASTBOOT_COMMAND_OEM_MASKROM,
 	FASTBOOT_COMMAND_OEM_BOARD,
+	FASTBOOT_COMMAND_OEM_HELP,
+	FASTBOOT_COMMAND_FETCH,
 	FASTBOOT_COMMAND_ACMD,
 	FASTBOOT_COMMAND_UCMD,
 	FASTBOOT_COMMAND_COUNT
@@ -63,6 +66,7 @@ enum fastboot_reboot_reason {
 	FASTBOOT_REBOOT_REASON_BOOTLOADER,
 	FASTBOOT_REBOOT_REASON_FASTBOOTD,
 	FASTBOOT_REBOOT_REASON_RECOVERY,
+	FASTBOOT_REBOOT_REASON_MASKROM,
 	FASTBOOT_REBOOT_REASONS_COUNT
 };
 
@@ -195,4 +199,30 @@ void fastboot_data_complete(char *response);
 void fastboot_multiresponse(int cmd, char *response);
 
 void fastboot_acmd_complete(void);
+
+/**
+ * fastboot_upload_remaining() - bytes remaining in the current fetch
+ *
+ * Return: bytes the gadget still needs to send via bulk-IN for the
+ * outstanding fastboot fetch command, or 0 if no fetch is in progress.
+ */
+u32 fastboot_upload_remaining(void);
+
+/**
+ * fastboot_upload_get_chunk() - next bulk-IN payload for fetch
+ *
+ * @max_len: largest chunk size the caller is willing to send
+ * @out_len: filled with the actual length returned
+ *
+ * Return: pointer to the next chunk in the fastboot RAM buffer.
+ */
+const void *fastboot_upload_get_chunk(unsigned int max_len, unsigned int *out_len);
+
+/**
+ * fastboot_upload_consume() - mark @len bytes of the fetch as sent
+ *
+ * @len: bytes that were just placed on the bulk-IN endpoint
+ */
+void fastboot_upload_consume(unsigned int len);
+
 #endif /* _FASTBOOT_H_ */

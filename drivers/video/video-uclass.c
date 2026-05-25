@@ -594,10 +594,27 @@ void *video_get_u_boot_logo(void)
 
 static int show_splash(struct udevice *dev)
 {
+	struct video_priv *priv = dev_get_uclass_priv(dev);
 	u8 *data = SPLASH_START(u_boot_logo);
+	ulong bmp_w = 0, bmp_h = 0;
+	uint bmp_bpix;
+	int x = -4, y = 4;
+	bool align = true;
 	int ret;
 
-	ret = video_bmp_display(dev, map_to_sysmem(data), -4, 4, true);
+	/* For full-panel splash images, skip the default corner-logo
+	 * alignment (which shifts the image by 3 pixels and leaves an
+	 * unpainted strip on the panel edge). */
+	if (data[0] == 'B' && data[1] == 'M') {
+		video_bmp_get_info(data, &bmp_w, &bmp_h, &bmp_bpix);
+		if (bmp_w == priv->xsize && bmp_h == priv->ysize) {
+			x = 0;
+			y = 0;
+			align = false;
+		}
+	}
+
+	ret = video_bmp_display(dev, map_to_sysmem(data), x, y, align);
 
 	return 0;
 }

@@ -1557,13 +1557,248 @@ static void meson_venci_cvbs_mode_set(struct meson_vpu_priv *priv,
 		hhi_write(HHI_VDAC_CNTL1, 0);
 }
 
-void meson_vpu_setup_venc(struct udevice *dev,
-			  const struct display_timing *mode, bool is_cvbs)
+/*
+ * Program ENCL for the MIPI DSI panel output path. Ported from Linux mainline
+ * drivers/gpu/drm/meson/meson_venc.c :: meson_venc_mipi_dsi_mode_set(), with
+ * the bare minimum needed for u-boot (no atomic state, no gamma table — gamma
+ * defaults to identity at reset).
+ *
+ * The math derives timing-register values directly from the panel's
+ * display_timing, so this works for any DSI panel that hands us a sensible
+ * timing block. The hardcoded ENCL_VIDEO_MODE_ADV / RGBIN config matches what
+ * Linux drives for all currently-supported G12A DSI boards.
+ */
+static void meson_venc_mipi_dsi_mode_set(struct meson_vpu_priv *priv,
+					 const struct display_timing *mode)
+{
+	unsigned int htotal, vtotal, hsync_start, vsync_start, hsync_end, vsync_end;
+	unsigned int max_pxcnt, max_lncnt;
+	unsigned int havon_begin, havon_end, vavon_bline, vavon_eline;
+	unsigned int hso_begin, hso_end, vso_begin, vso_end, vso_bline, vso_eline;
+	bool phsync, pvsync;
+
+	htotal = mode->hactive.typ + mode->hfront_porch.typ +
+		 mode->hback_porch.typ + mode->hsync_len.typ;
+	vtotal = mode->vactive.typ + mode->vfront_porch.typ +
+		 mode->vback_porch.typ + mode->vsync_len.typ;
+
+	/*
+	 * Linux's drm_display_mode uses hsync_start/end (start of front porch
+	 * / start of back porch). Reconstruct from u-boot's display_timing
+	 * back-porch-centric layout so the math matches Linux's verbatim.
+	 */
+	hsync_start = mode->hactive.typ + mode->hfront_porch.typ;
+	hsync_end = hsync_start + mode->hsync_len.typ;
+	vsync_start = mode->vactive.typ + mode->vfront_porch.typ;
+	vsync_end = vsync_start + mode->vsync_len.typ;
+
+	max_pxcnt = htotal - 1;
+	max_lncnt = vtotal - 1;
+	havon_begin = htotal - hsync_start;
+	havon_end = havon_begin + mode->hactive.typ - 1;
+	vavon_bline = vtotal - vsync_start;
+	vavon_eline = vavon_bline + mode->vactive.typ - 1;
+	hso_begin = 0;
+	hso_end = hsync_end - hsync_start;
+	vso_begin = 0;
+	vso_end = 0;
+	vso_bline = 0;
+	vso_eline = vsync_end - vsync_start;
+
+	phsync = !!(mode->flags & DISPLAY_FLAGS_HSYNC_HIGH);
+	pvsync = !!(mode->flags & DISPLAY_FLAGS_VSYNC_HIGH);
+
+	/* Route VIU/VPP pixel stream to ENCL (panel encoder). */
+	meson_vpp_setup_mux(priv, MESON_VIU_VPP_MUX_ENCL);
+
+	writel(0, priv->io_base + _REG(ENCL_VIDEO_EN));
+
+	writel(ENCL_PX_LN_CNT_SHADOW_EN,
+	       priv->io_base + _REG(ENCL_VIDEO_MODE));
+	writel(ENCL_VIDEO_MODE_ADV_VFIFO_EN |
+	       ENCL_VIDEO_MODE_ADV_GAIN_HDTV |
+	       ENCL_SEL_GAMMA_RGB_IN,
+	       priv->io_base + _REG(ENCL_VIDEO_MODE_ADV));
+
+	writel(ENCL_VIDEO_FILT_CTRL_BYPASS_FILTER,
+	       priv->io_base + _REG(ENCL_VIDEO_FILT_CTRL));
+	writel(max_pxcnt, priv->io_base + _REG(ENCL_VIDEO_MAX_PXCNT));
+	writel(max_lncnt, priv->io_base + _REG(ENCL_VIDEO_MAX_LNCNT));
+	writel(havon_begin, priv->io_base + _REG(ENCL_VIDEO_HAVON_BEGIN));
+	writel(havon_end, priv->io_base + _REG(ENCL_VIDEO_HAVON_END));
+	writel(vavon_bline, priv->io_base + _REG(ENCL_VIDEO_VAVON_BLINE));
+	writel(vavon_eline, priv->io_base + _REG(ENCL_VIDEO_VAVON_ELINE));
+
+	writel(hso_begin, priv->io_base + _REG(ENCL_VIDEO_HSO_BEGIN));
+	writel(hso_end, priv->io_base + _REG(ENCL_VIDEO_HSO_END));
+	writel(vso_begin, priv->io_base + _REG(ENCL_VIDEO_VSO_BEGIN));
+	writel(vso_end, priv->io_base + _REG(ENCL_VIDEO_VSO_END));
+	writel(vso_bline, priv->io_base + _REG(ENCL_VIDEO_VSO_BLINE));
+	writel(vso_eline, priv->io_base + _REG(ENCL_VIDEO_VSO_ELINE));
+	writel(ENCL_VIDEO_RGBIN_RGB | ENCL_VIDEO_RGBIN_ZBLK,
+	       priv->io_base + _REG(ENCL_VIDEO_RGBIN_CTRL));
+
+	/* Reset test pattern engine to black; leave it disabled. */
+	writel(0, priv->io_base + _REG(ENCL_TST_MDSEL));
+	writel(0, priv->io_base + _REG(ENCL_TST_Y));
+	writel(0, priv->io_base + _REG(ENCL_TST_CB));
+	writel(0, priv->io_base + _REG(ENCL_TST_CR));
+	writel(1, priv->io_base + _REG(ENCL_TST_EN));
+	writel_bits(ENCL_VIDEO_MODE_ADV_VFIFO_EN, 0,
+		    priv->io_base + _REG(ENCL_VIDEO_MODE_ADV));
+
+	/*
+	 * Deliberately do NOT write ENCL_VIDEO_EN = 1 here.
+	 *
+	 * The DW DSI host's video-mode DSI_PWR_UP pulse (issued by
+	 * dsi_host_enable -> dw_mipi_dsi_set_mode(VIDEO)) must complete
+	 * *before* ENCL starts emitting frames. If ENCL is already running
+	 * when the pulse fires, the host's video state machine latches at
+	 * a random point in ENCL's free-running frame cycle, which can
+	 * produce a persistent vertical shift (host's frame-0 != ENCL's
+	 * frame-0) or - rarer - a horizontal byte offset. Both have been
+	 * observed at kernel handoff.
+	 *
+	 * meson_venc_mipi_dsi_video_enable() asserts ENCL_VIDEO_EN = 1
+	 * after the host is in video mode, guaranteeing the host catches
+	 * ENCL's very first VSYNC as its frame-0. See meson_vpu.c
+	 * meson_vpu_setup_mode() for the call ordering:
+	 *   video_bridge_attach (host PHY + CMD-mode init)
+	 *     -> video_bridge_set_backlight (panel DCS init,
+	 *                                    then dsi_host_enable VIDEO mode)
+	 *       -> meson_venc_mipi_dsi_video_enable (ENCL goes live)
+	 */
+
+	/* L-side (LCD-style) sync/DE outputs. */
+	writel(0, priv->io_base + _REG(L_RGB_BASE_ADDR));
+	writel(0x400, priv->io_base + _REG(L_RGB_COEFF_ADDR));
+
+	writel(L_DITH_CNTL_DITH10_EN, priv->io_base + _REG(L_DITH_CNTL_ADDR));
+
+	/* DE signal for TTL */
+	writel(havon_begin, priv->io_base + _REG(L_OEH_HS_ADDR));
+	writel(havon_end + 1, priv->io_base + _REG(L_OEH_HE_ADDR));
+	writel(vavon_bline, priv->io_base + _REG(L_OEH_VS_ADDR));
+	writel(vavon_eline, priv->io_base + _REG(L_OEH_VE_ADDR));
+
+	writel(havon_begin, priv->io_base + _REG(L_OEV1_HS_ADDR));
+	writel(havon_end + 1, priv->io_base + _REG(L_OEV1_HE_ADDR));
+	writel(vavon_bline, priv->io_base + _REG(L_OEV1_VS_ADDR));
+	writel(vavon_eline, priv->io_base + _REG(L_OEV1_VE_ADDR));
+
+	/* Hsync signal for TTL */
+	if (phsync) {
+		writel(hso_begin, priv->io_base + _REG(L_STH1_HS_ADDR));
+		writel(hso_end, priv->io_base + _REG(L_STH1_HE_ADDR));
+	} else {
+		writel(hso_end, priv->io_base + _REG(L_STH1_HS_ADDR));
+		writel(hso_begin, priv->io_base + _REG(L_STH1_HE_ADDR));
+	}
+	writel(0, priv->io_base + _REG(L_STH1_VS_ADDR));
+	writel(max_lncnt, priv->io_base + _REG(L_STH1_VE_ADDR));
+
+	/* Vsync signal for TTL */
+	writel(vso_begin, priv->io_base + _REG(L_STV1_HS_ADDR));
+	writel(vso_end, priv->io_base + _REG(L_STV1_HE_ADDR));
+	if (pvsync) {
+		writel(vso_bline, priv->io_base + _REG(L_STV1_VS_ADDR));
+		writel(vso_eline, priv->io_base + _REG(L_STV1_VE_ADDR));
+	} else {
+		writel(vso_eline, priv->io_base + _REG(L_STV1_VS_ADDR));
+		writel(vso_bline, priv->io_base + _REG(L_STV1_VE_ADDR));
+	}
+
+	/* DE signal */
+	writel(havon_begin, priv->io_base + _REG(L_DE_HS_ADDR));
+	writel(havon_end + 1, priv->io_base + _REG(L_DE_HE_ADDR));
+	writel(vavon_bline, priv->io_base + _REG(L_DE_VS_ADDR));
+	writel(vavon_eline, priv->io_base + _REG(L_DE_VE_ADDR));
+
+	/* Hsync signal */
+	writel(hso_begin, priv->io_base + _REG(L_HSYNC_HS_ADDR));
+	writel(hso_end, priv->io_base + _REG(L_HSYNC_HE_ADDR));
+	writel(0, priv->io_base + _REG(L_HSYNC_VS_ADDR));
+	writel(max_lncnt, priv->io_base + _REG(L_HSYNC_VE_ADDR));
+
+	/* Vsync signal */
+	writel(vso_begin, priv->io_base + _REG(L_VSYNC_HS_ADDR));
+	writel(vso_end, priv->io_base + _REG(L_VSYNC_HE_ADDR));
+	writel(vso_bline, priv->io_base + _REG(L_VSYNC_VS_ADDR));
+	writel(vso_eline, priv->io_base + _REG(L_VSYNC_VE_ADDR));
+
+	writel(0, priv->io_base + _REG(L_INV_CNT_ADDR));
+	writel(L_TCON_MISC_SEL_STV1 | L_TCON_MISC_SEL_STV2,
+	       priv->io_base + _REG(L_TCON_MISC_SEL_ADDR));
+}
+
+/*
+ * After the bridge has done its DSI init + switched to video mode, swap ENCL
+ * from the all-black test pattern that meson_venc_mipi_dsi_mode_set() left it
+ * on, to the actual VPU framebuffer path. Mirrors Linux meson_encoder_dsi.c
+ * :: meson_encoder_dsi_atomic_enable().
+ */
+void meson_venc_mipi_dsi_video_enable(struct udevice *dev)
 {
 	struct meson_vpu_priv *priv = dev_get_priv(dev);
 
-	if (is_cvbs)
-		return meson_venci_cvbs_mode_set(priv, &meson_cvbs_enci_pal);
+	writel(0, priv->io_base + _REG(ENCL_VIDEO_EN));
 
-	meson_venc_hdmi_mode_set(priv, mode);
+	writel_bits(ENCL_VIDEO_MODE_ADV_VFIFO_EN, ENCL_VIDEO_MODE_ADV_VFIFO_EN,
+		    priv->io_base + _REG(ENCL_VIDEO_MODE_ADV));
+	writel(0, priv->io_base + _REG(ENCL_TST_EN));
+
+	/* Disable the VPP_WRAP_OSD1 colour-matrix passthrough block. */
+	writel_bits(BIT(0), 0,
+		    priv->io_base + _REG(VPP_WRAP_OSD1_MATRIX_EN_CTRL));
+
+	/*
+	 * Reset ENCL's internal pixel/line counters to (0, 0) so the very
+	 * first scanline ENCL emits after VIDEO_EN = 1 is the start of a
+	 * fresh frame.
+	 *
+	 * cts_encl (the ENCL pixel clock) runs continuously from
+	 * meson_venc_mipi_dsi_mode_set() onward; ENCL_VIDEO_EN = 0 stops
+	 * the encoder from emitting but does NOT freeze the counter.
+	 * Without this reset, ENCL_VIDEO_EN = 1 starts emission at a
+	 * random scan position - whichever pixel-clock cycle the counter
+	 * happens to be on. The DW DSI host, sitting in video mode waiting
+	 * for VSYNC, then latches at that random position - producing a
+	 * persistent vertical shift (host frame-0 != ENCL frame-0) and/or
+	 * color permutation (host byte counter off by mod 3). Both have
+	 * been observed at kernel handoff.
+	 *
+	 * ENCL_DBG_PX_RST / ENCL_DBG_LN_RST follow the same
+	 * write-1-asserts / write-0-releases convention as
+	 * ENCI_DBG_PX_RST (used elsewhere in this file with the explicit
+	 * "UNreset Interlaced TV Encoder" comment). Assert reset, fence
+	 * with a readback so the write reaches the VPU before we release,
+	 * then release and enable.
+	 */
+	writel(1, priv->io_base + _REG(ENCL_DBG_PX_RST));
+	writel(1, priv->io_base + _REG(ENCL_DBG_LN_RST));
+	(void)readl(priv->io_base + _REG(ENCL_DBG_PX_RST));
+	writel(0, priv->io_base + _REG(ENCL_DBG_LN_RST));
+	writel(0, priv->io_base + _REG(ENCL_DBG_PX_RST));
+
+	writel(1, priv->io_base + _REG(ENCL_VIDEO_EN));
+}
+
+void meson_vpu_setup_venc(struct udevice *dev,
+			  const struct display_timing *mode,
+			  enum meson_vpu_output out)
+{
+	struct meson_vpu_priv *priv = dev_get_priv(dev);
+
+	switch (out) {
+	case MESON_VPU_OUT_CVBS:
+		meson_venci_cvbs_mode_set(priv, &meson_cvbs_enci_pal);
+		return;
+	case MESON_VPU_OUT_DSI:
+		meson_venc_mipi_dsi_mode_set(priv, mode);
+		return;
+	case MESON_VPU_OUT_HDMI:
+	default:
+		meson_venc_hdmi_mode_set(priv, mode);
+		return;
+	}
 }

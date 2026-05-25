@@ -14,6 +14,7 @@
 #include <asm/arch/sm.h>
 #include <asm/cache.h>
 #include <asm/global_data.h>
+#include <asm/io.h>
 #include <asm/ptrace.h>
 #include <linux/bitops.h>
 #include <linux/compiler_attributes.h>
@@ -234,6 +235,42 @@ int meson_sm_get_reboot_reason(void)
 
 	/* The SMC call is not used, we directly use AO_SEC_SD_CFG15 */
 	return FIELD_GET(REBOOT_REASON_MASK, reason);
+}
+
+/*
+ * Wire-up for stashing a reboot reason that next-boot u-boot can read
+ * via meson_sm_get_reboot_reason(). Calls AML_SM_SET_REBOOT_REASON
+ * SMC; the TF-A handler writes to AO_RTI_STATUS_REG3 bits 15:12.
+ *
+ * NOTE — INCOMPLETE (2026-05-13):
+ * The value WRITES correctly via SMC and is preserved by TF-A's
+ * g12a_system_reset (locally-patched to not mask bits 15:12). BUT the
+ * actual SoC reset clears AO_RTI_STATUS_REG3 entirely, so the value
+ * does not survive across boots. Vendor BL31 used a different
+ * register (AO_RTI_SCP_STAT at 0xff80023c, what get_reboot_reason
+ * still reads) — but AP-side writes to that register hang because
+ * the SCP firmware actively owns it. Vendor BL31 must have used a
+ * SCPI extension to ask SCP firmware to write the reason; that
+ * protocol isn't documented and isn't in upstream TF-A. Needs
+ * vendor BL30/BL31 binary RE to figure out the right SCPI command.
+ *
+ * Until that's solved the fastboot_set_reboot_flag override + the
+ * boot_check env macro that consume this will silently no-op:
+ * meson_sm_get_reboot_reason() always returns cold_boot (0) on the
+ * next boot. Plumbing is left in place so it lights up automatically
+ * once the SCPI command is added to TF-A.
+ */
+int meson_sm_set_reboot_reason(unsigned int reason)
+{
+	struct pt_regs regs = { 0 };
+	struct udevice *dev = meson_get_sm_device();
+	s32 ret;
+
+	if (IS_ERR(dev))
+		return PTR_ERR(dev);
+
+	regs.regs[1] = reason & 0xf;
+	return sm_call(dev, MESON_SMC_CMD_SET_REBOOT_REASON, &ret, &regs);
 }
 
 int meson_sm_pwrdm_set(size_t index, int cmd)

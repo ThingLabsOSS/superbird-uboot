@@ -299,7 +299,7 @@ static int meson_pwm_probe(struct udevice *dev)
 					return err;
 
 				uclass_foreach_dev(cdev, uc) {
-					if (strcmp(cdev->driver->name, "fixed_rate_clock"))
+					if (strcmp(cdev->driver->name, "fixed_clock"))
 						continue;
 
 					str = ofnode_read_string(dev_ofnode(cdev),
@@ -365,7 +365,7 @@ static int meson_pwm_probe(struct udevice *dev)
 
 		/* Get id in list */
 		for (p = 0 ; p < data->num_parents ; ++p) {
-			if (!strcmp(channel->clk.dev->driver->name, "fixed_rate_clock")) {
+			if (!strcmp(channel->clk.dev->driver->name, "fixed_clock")) {
 				if (data->parent_ids[p] == -1)
 					break;
 			} else {

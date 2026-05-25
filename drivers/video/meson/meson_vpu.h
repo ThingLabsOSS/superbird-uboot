@@ -57,7 +57,13 @@ bool meson_vpu_is_compatible(struct meson_vpu_priv *priv,
 #define dmc_read(offset) \
 	readl(priv->dmc_base + offset)
 
-#define MESON_CANVAS_ID_OSD1	0x4e
+/* Vendor convention is canvas 0x40 for OSD1 — vendor kernel inherits
+ * the canvas table when it takes over the panel. Using a different ID
+ * (e.g. 0x4e from the original mainline driver) leaves canvas 0x40
+ * uninitialized → kernel canvas allocator reads stale RAM through it
+ * → garbled colors on screen (green/red tint observed). Match stock
+ * u-boot behavior. */
+#define MESON_CANVAS_ID_OSD1	0x40
 
 /* Canvas configuration. */
 #define MESON_CANVAS_WRAP_NONE	0x00
@@ -78,15 +84,31 @@ void meson_canvas_setup(struct meson_vpu_priv *priv,
 #define MESON_VIU_VPP_MUX_ENCI	0x5
 /* Mux VIU/VPP to ENCP */
 #define MESON_VIU_VPP_MUX_ENCP	0xA
+/* Mux VIU/VPP to ENCL (panel encoder, used for the MIPI DSI output path) */
+#define MESON_VIU_VPP_MUX_ENCL	0x0
+
+/*
+ * Which video output path is currently driving pixels out of the VPU.
+ * Used to dispatch the right setup_venc / setup_vclk sequences and to
+ * tag the simplefb pipeline.
+ */
+enum meson_vpu_output {
+	MESON_VPU_OUT_HDMI,
+	MESON_VPU_OUT_CVBS,
+	MESON_VPU_OUT_DSI,
+};
 
 void meson_vpp_setup_mux(struct meson_vpu_priv *priv, unsigned int mux);
 void meson_vpu_init(struct udevice *dev);
 void meson_vpu_setup_plane(struct udevice *dev, bool is_interlaced);
 bool meson_venc_hdmi_supported_mode(const struct display_timing *mode);
 void meson_vpu_setup_venc(struct udevice *dev,
-			  const struct display_timing *mode, bool is_cvbs);
+			  const struct display_timing *mode,
+			  enum meson_vpu_output out);
+void meson_venc_mipi_dsi_video_enable(struct udevice *dev);
 bool meson_vclk_dmt_supported_freq(struct meson_vpu_priv *priv,
 				   unsigned int freq);
 void meson_vpu_setup_vclk(struct udevice *dev,
-			  const struct display_timing *mode, bool is_cvbs);
+			  const struct display_timing *mode,
+			  enum meson_vpu_output out);
 #endif

@@ -621,6 +621,12 @@ static void start_transfer(struct fsg_dev *fsg, struct usb_ep *ep,
 
 static void busy_indicator(void)
 {
+	/* Silenced — the original |/-\ spinner floods the UART log
+	 * (~30 KB/sec when UMS is idle) and is useless without a TTY
+	 * doing carriage-return overstrike. Re-enable by reverting this
+	 * patch if you actually want it. */
+	return;
+
 	static int state;
 
 	switch (state) {
@@ -670,6 +676,10 @@ static int sleep_thread(struct fsg_common *common)
 
 			/* Handle CTRL+C */
 			if (ctrlc())
+				return -EPIPE;
+
+			/* Handle board abort request (e.g. carthing back button) */
+			if (ums_board_abort_check())
 				return -EPIPE;
 
 			/* Check cable connection */

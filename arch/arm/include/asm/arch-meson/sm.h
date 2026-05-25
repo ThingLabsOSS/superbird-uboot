@@ -104,6 +104,14 @@ enum {
  */
 int meson_sm_get_reboot_reason(void);
 
+/**
+ * meson_sm_set_reboot_reason - stash a reboot reason in AO_SEC_SD_CFG15
+ *                              so the next boot can read it back via
+ *                              meson_sm_get_reboot_reason()
+ * @reason: a REBOOT_REASON_* enum value (0..15; the field is 4 bits)
+ */
+int meson_sm_set_reboot_reason(unsigned int reason);
+
 #define PWRDM_OFF 0
 #define PWRDM_ON 1
 

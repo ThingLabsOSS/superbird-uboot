@@ -73,8 +73,8 @@ static int env_fat_save(void)
 	if (err)
 		return err;
 
-	part = blk_get_device_part_str(ifname, dev_and_part,
-				       &dev_desc, &info, 1);
+	part = part_get_info_by_dev_and_name_or_num(ifname, dev_and_part,
+						    &dev_desc, &info, 1);
 	if (part < 0)
 		return 1;
 
@@ -147,8 +147,8 @@ static int env_fat_load(void)
 	}
 #endif
 #endif
-	part = blk_get_device_part_str(ifname, dev_and_part,
-				       &dev_desc, &info, 1);
+	part = part_get_info_by_dev_and_name_or_num(ifname, dev_and_part,
+						    &dev_desc, &info, 1);
 	if (part < 0)
 		goto err_env_relocate;
 

@@ -16,8 +16,20 @@
 #include <usb.h>
 #include <usb_mass_storage.h>
 #include <watchdog.h>
+#include <linux/compiler.h>
 #include <linux/delay.h>
 #include <linux/printk.h>
+
+/*
+ * Optional board hook for exiting the UMS poll loop without UART
+ * access. Default is a no-op; boards can override to poll a physical
+ * button (e.g. carthing's "back" button) and return non-zero to
+ * request a clean shutdown.
+ */
+__weak int ums_board_abort_check(void)
+{
+	return 0;
+}
 
 static int ums_read_sector(struct ums *ums_dev,
 			   ulong start, lbaint_t blkcnt, void *buf)
@@ -236,6 +248,12 @@ static int do_usb_mass_storage(struct cmd_tbl *cmdtp, int flag,
 			if (rc == -EPIPE)
 				printf("\rCTRL+C - Operation aborted\n");
 
+			rc = CMD_RET_SUCCESS;
+			goto cleanup_register;
+		}
+
+		if (ums_board_abort_check()) {
+			printf("\rExit requested by board\n");
 			rc = CMD_RET_SUCCESS;
 			goto cleanup_register;
 		}

@@ -112,6 +112,14 @@ static int meson_legacy_mmc_set_ios(struct mmc *mmc)
 	else
 		return -EINVAL;
 
+	/* DDR mode bit — set when the mmc core has negotiated the eMMC
+	 * into DDR52 (or any other DDR mode) via CMD6. mmc->ddr_mode is
+	 * the framework's signal that bytes go out on both clock edges. */
+	if (mmc->ddr_mode)
+		meson_mmc_cfg |= CFG_DDR_EN;
+	else
+		meson_mmc_cfg &= ~CFG_DDR_EN;
+
 	/* 512 bytes block length */
 	meson_mmc_cfg &= ~CFG_BL_LEN_MASK;
 	meson_mmc_cfg |= CFG_BL_LEN_512;
@@ -182,9 +190,14 @@ static void meson_mmc_setup_addr(struct mmc *mmc, struct mmc_data *data)
 			invalidate_dcache_range(data_addr,
 						data_addr + data_size);
 		} else {
-			pdata->w_buf = calloc(data_size, sizeof(char));
-			data_addr = (ulong) pdata->w_buf;
-			memcpy(pdata->w_buf, data->src, data_size);
+			/* Upstream allocated + memcpy'd into a fresh buffer
+			 * on every write and never freed it — making each
+			 * write a 256 KiB malloc + copy + leak. The src
+			 * buffer is already cacheline-aligned for every
+			 * caller in u-boot proper (memalign in fsg, in the
+			 * block-cache layer, etc), so DMA directly from it
+			 * after a dcache flush. */
+			data_addr = (ulong) data->src;
 			flush_dcache_range(data_addr, data_addr + data_size);
 		}
 	}
@@ -242,9 +255,6 @@ static int meson_legacy_mmc_send_cmd(struct mmc *mmc, struct mmc_cmd *cmd,
 		ret = -EIO;
 
 	meson_mmc_read_response(mmc, cmd);
-
-	if (data && data->flags == MMC_DATA_WRITE)
-		free(pdata->w_buf);
 
 	/* reset status bits */
 	meson_write(mmc, STATUS_MASK, MESON_SD_EMMC_STATUS);
@@ -351,6 +361,19 @@ static int meson_mmc_probe(struct udevice *dev)
 	cfg->f_max = 40000000; /* 40 MHz */
 	cfg->b_max = 511; /* max 512 - 1 blocks */
 	cfg->name = dev->name;
+
+	/* Without this, the DT's `bus-width = <8>` and `cap-mmc-highspeed`
+	 * properties never reach mmc-uclass and the framework stays at
+	 * 1-bit even though the controller and eMMC support 8-bit.
+	 *
+	 * Strip HS200 / HS400 / HS400_ES since this driver doesn't yet
+	 * implement input-sampling tuning (HS200) or data-strobe support
+	 * (HS400). DDR52 is supported via the CFG_DDR_EN bit set in
+	 * set_ios. f_max is capped at 52 MHz accordingly. */
+	mmc_of_parse(dev, cfg);
+	cfg->host_caps &= ~(MMC_CAP(MMC_HS_400) | MMC_CAP(MMC_HS_400_ES) |
+			    MMC_CAP(MMC_HS_200));
+	cfg->f_max = min_t(uint, cfg->f_max, 52000000U);
 
 	if (IS_ENABLED(CONFIG_SPL_BUILD)) {
 		cfg->host_caps &= ~(MMC_MODE_HS_52MHz | MMC_MODE_HS);

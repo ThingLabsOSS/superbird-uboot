@@ -306,11 +306,24 @@ static struct fsg_lun *fsg_lun_from_dev(struct device *dev)
 #define EP0_BUFSIZE	256
 #define DELAYED_STATUS	(EP0_BUFSIZE + 999)	/* An impossibly large value */
 
-/* Number of buffers we will use.  2 is enough for double-buffering */
-#define FSG_NUM_BUFFERS	2
+/* Number of buffers we will use. 4 lets the storage layer write 1 while
+ * USB fills the other 3, smoothing the per-transfer overhead in the
+ * gadget poll loop. (Was 2 — "enough for double-buffering" — but on
+ * G12A that left throughput ~6 MB/s write; 4 buffers ride much closer
+ * to USB 2.0 hi-speed practical.)
+ *
+ * Bumping to 8 (and FSG_BUFLEN to 1 MiB) gave **0** measurable gain in
+ * UMS benchmarks (read stayed 14 MB/s, write stayed 7 MB/s) because
+ * Linux's usb-storage BOT host driver caps SCSI commands at 240 sectors
+ * (120 KB) regardless of gadget buffer size — see `cat
+ * /sys/block/sdX/queue/max_hw_sectors_kb`. Real throughput gains require
+ * UAS gadget impl or host kernel patch. Documented 2026-05-16. */
+#define FSG_NUM_BUFFERS	4
 
-/* Default size of buffer length. */
-#define FSG_BUFLEN	((u32)131072)
+/* Default size of buffer length. 256 KiB per transfer reduces per-CBW
+ * overhead vs the upstream default of 128 KiB. (Bigger is wasted RAM —
+ * the host fragments to 120 KiB SCSI commands anyway, see note above.) */
+#define FSG_BUFLEN	((u32)262144)
 
 /* Maximal number of LUNs supported in mass storage function */
 #define FSG_MAX_LUNS	8

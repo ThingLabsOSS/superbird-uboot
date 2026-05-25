@@ -544,6 +544,16 @@ config VIDEO_LCD_ENDEAVORU
 	  using the same DSI command sequence. The panel has a 720x1280
 	  resolution and uses 24 bit RGB per pixel.
 
+config VIDEO_LCD_ST7701S_CARTHING
+	bool "Sitronix ST7701S MIPI-DSI panel (Spotify Car Thing variant)"
+	depends on PANEL && BACKLIGHT
+	select VIDEO_MIPI_DSI
+	help
+	  Say Y to enable the ST7701S 480x800 MIPI-DSI panel as fitted on
+	  the Spotify Car Thing (codename superbird). The vendor calls this
+	  panel_type=lcd_8; the init command sequence in this driver is the
+	  byte-for-byte copy from the vendor u-boot 2015.01 source.
+
 config VIDEO_LCD_HIMAX_HX8394
 	bool "Himax HX8394 DSI LCD panel support"
 	depends on PANEL && BACKLIGHT

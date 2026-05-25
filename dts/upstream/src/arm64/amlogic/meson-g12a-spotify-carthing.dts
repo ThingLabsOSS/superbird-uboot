@@ -1,0 +1,452 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * Device tree for the Spotify Car Thing (codename "superbird").
+ *
+ * Hardware notes:
+ *   SoC:   Amlogic S905X2 family (G12A)
+ *   DRAM:  512 MiB
+ *   eMMC:  Samsung S40004, 4 GiB, 8-bit HS200-capable
+ *   WiFi:  Broadcom BCM43xxx via SDIO (sd_emmc_a)
+ *   UART:  AO-A on the test-pad (debug console, 115200n8)
+ *   Panel: 480x800 MIPI DSI, ILI9806E (no upstream driver yet)
+ *   Buttons: preset 1-4 + back + menu (GPIO inputs)
+ *
+ * Phase-2 stage-C DT: just enough to boot u-boot to a CLI prompt with
+ * accurate DRAM size and eMMC access. Panel, buttons, audio routing,
+ * etc. will be filled in later phases.
+ */
+
+/dts-v1/;
+
+#include "meson-g12a.dtsi"
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/gpio/meson-g12a-gpio.h>
+#include <dt-bindings/input/input.h>
+
+/ {
+	compatible = "spotify,carthing", "amlogic,g12a";
+	model = "Spotify Car Thing";
+
+	/*
+	 * Front-panel buttons + wheel-press. GPIO mapping ported from
+	 * spsgsb/kernel-common arch/arm64/boot/dts/amlogic/superbird_evt_512.dts
+	 * (the 512 MiB production variant; ours is also 512 MiB).
+	 *
+	 * Physical buttons:
+	 *   preset1 / preset2 / preset3 / preset4   GPIOA_0..3 — top row
+	 *   menu                                    GPIOAO_3   — labeled "mute"
+	 *                                                        in vendor DTS
+	 *                                                        but the physical
+	 *                                                        cap is the menu
+	 *                                                        "m" key.
+	 *                                                        Lives on the AO
+	 *                                                        GPIO bank, not
+	 *                                                        the main one.
+	 *   back                                    GPIOA_5
+	 *   select                                  GPIOZ_7    — rotary wheel press
+	 *
+	 * The rotary encoder itself (GPIOZ_8 / GPIOZ_9) is not bound here
+	 * because u-boot has no upstream rotary-encoder uclass. Linux will
+	 * pick it up via the rotary-encoder driver once we add a kernel DT.
+	 *
+	 * pinctrl uses bias-disable to match vendor (external pull-ups
+	 * exist for all confirmed inputs).
+	 */
+	keys {
+		compatible = "gpio-keys";
+
+		button-preset1 {
+			label = "preset1";
+			linux,code = <KEY_NUMERIC_1>;
+			gpios = <&gpio GPIOA_0 GPIO_ACTIVE_LOW>;
+			pinctrl-0 = <&carthing_btn_pins>;
+			pinctrl-names = "default";
+		};
+
+		button-preset2 {
+			label = "preset2";
+			linux,code = <KEY_NUMERIC_2>;
+			gpios = <&gpio GPIOA_1 GPIO_ACTIVE_LOW>;
+			pinctrl-0 = <&carthing_btn_pins>;
+			pinctrl-names = "default";
+		};
+
+		button-preset3 {
+			label = "preset3";
+			linux,code = <KEY_NUMERIC_3>;
+			gpios = <&gpio GPIOA_2 GPIO_ACTIVE_LOW>;
+			pinctrl-0 = <&carthing_btn_pins>;
+			pinctrl-names = "default";
+		};
+
+		button-preset4 {
+			label = "preset4";
+			linux,code = <KEY_NUMERIC_4>;
+			gpios = <&gpio GPIOA_3 GPIO_ACTIVE_LOW>;
+			pinctrl-0 = <&carthing_btn_pins>;
+			pinctrl-names = "default";
+		};
+
+		button-menu {
+			label = "menu";
+			linux,code = <KEY_MENU>;
+			gpios = <&gpio_ao GPIOAO_3 GPIO_ACTIVE_LOW>;
+			pinctrl-0 = <&carthing_menu_pins>;
+			pinctrl-names = "default";
+		};
+
+		button-back {
+			label = "back";
+			linux,code = <KEY_BACK>;
+			gpios = <&gpio GPIOA_5 GPIO_ACTIVE_LOW>;
+			pinctrl-0 = <&carthing_btn_pins>;
+			pinctrl-names = "default";
+		};
+
+		button-select {
+			label = "select";
+			linux,code = <KEY_ENTER>;
+			gpios = <&gpio GPIOZ_7 GPIO_ACTIVE_LOW>;
+			pinctrl-0 = <&carthing_wheel_pins>;
+			pinctrl-names = "default";
+		};
+	};
+
+	aliases {
+		serial0 = &uart_AO;
+		mmc0 = &sd_emmc_c;
+		/* Mirror vendor DT bus numbering: i2c0..3 are the EE
+		 * controllers (in reg order, same as upstream node
+		 * names) and i2c4 is the AO controller. So MAX14656 is
+		 * bus 2, MFi auth is bus 3, touch is bus 0. */
+		i2c0 = &i2c0;
+		i2c1 = &i2c1;
+		i2c2 = &i2c2;
+		i2c3 = &i2c3;
+		i2c4 = &i2c_AO;
+	};
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+	};
+
+	memory@0 {
+		device_type = "memory";
+		reg = <0x0 0x0 0x0 0x20000000>; /* 512 MiB */
+	};
+
+	/* SoC-internal voltage rails -- same as the G12A reference designs. */
+	dc_in: regulator-dc-in {
+		compatible = "regulator-fixed";
+		regulator-name = "DC_IN";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		regulator-always-on;
+	};
+
+	vddao_3v3: regulator-vddao-3v3 {
+		compatible = "regulator-fixed";
+		regulator-name = "VDDAO_3V3";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		vin-supply = <&dc_in>;
+		regulator-always-on;
+	};
+
+	vddio_ao1v8: regulator-vddio-ao1v8 {
+		compatible = "regulator-fixed";
+		regulator-name = "VDDIO_AO1V8";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		vin-supply = <&vddao_3v3>;
+		regulator-always-on;
+	};
+
+	emmc_1v8: regulator-emmc-1v8 {
+		compatible = "regulator-fixed";
+		regulator-name = "EMMC_1V8";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		vin-supply = <&vddao_3v3>;
+		regulator-always-on;
+	};
+
+	/* PWM-controlled CPU regulator, same SY8120B1ABC found on sei510 etc. */
+	vddcpu: regulator-vddcpu {
+		compatible = "pwm-regulator";
+		regulator-name = "VDDCPU";
+		regulator-min-microvolt = <721000>;
+		regulator-max-microvolt = <1022000>;
+		pwm-supply = <&dc_in>;
+		pwms = <&pwm_AO_cd 1 1250 0>;
+		pwm-dutycycle-range = <100 0>;
+		regulator-boot-on;
+		regulator-always-on;
+	};
+
+	emmc_pwrseq: emmc-pwrseq {
+		compatible = "mmc-pwrseq-emmc";
+		reset-gpios = <&gpio BOOT_12 GPIO_ACTIVE_LOW>;
+	};
+
+	/*
+	 * Panel backlight. The carthing's backlight rail is gated by a
+	 * BL_EN pin and modulated by a PWM input -- driving just BL_EN high
+	 * (verified live) does NOT light the LEDs, so PWM pulses are
+	 * required.
+	 *
+	 * Parameters pulled from vendor `board/amlogic/superbird_production/lcd.c`
+	 * ext_lcd_config[] entry for "lcd_8":
+	 *   - PWM_F channel (matches our `&pwm_ef 1`)
+	 *   - 180 Hz carrier (~5.55 ms period); the LED driver IC won't
+	 *     respond to anything in the kHz range
+	 *   - BL_PWM_NEGATIVE polarity: physical PWM is active-low, i.e.
+	 *     low duty cycle = bright. We pass polarity=1 in the pwms cells
+	 *     so pwm-meson inverts the duty before driving the pin
+	 *   - duty range 25%-100% mapped onto brightness 10-255
+	 */
+	backlight: backlight {
+		compatible = "pwm-backlight";
+		pwms = <&pwm_ef 1 5555555 1>;
+		enable-gpios = <&gpio GPIOH_4 GPIO_ACTIVE_HIGH>;
+		/* PWM polarity on this board is inverted at the silicon level
+		 * (pwms third cell = 1) but u-boot's pwm-meson driver doesn't
+		 * actually honour PWM_POLARITY_INVERTED, so smaller raw values
+		 * appear visually brighter. Keep the original level table for
+		 * compatibility with any future Linux DT use, but pick index 0
+		 * as the default — that's the smallest raw value (10) which
+		 * produces the brightest panel on this hardware. */
+		brightness-levels = <10 32 64 96 128 160 192 224 255>;
+		default-brightness-level = <0>;
+		power-supply = <&vddao_3v3>;
+	};
+};
+
+/* Hardware that does NOT exist on the Car Thing */
+&ethmac        { status = "disabled"; };
+&hdmi_tx       { status = "disabled"; };
+&cec_AO        { status = "disabled"; };
+&cecb_AO       { status = "disabled"; };
+&tohdmitx      { status = "disabled"; };
+&ir            { status = "disabled"; };
+&sd_emmc_b     { status = "disabled"; }; /* sei510 SD-card slot, absent here */
+
+&cpu0 { cpu-supply = <&vddcpu>; };
+&cpu1 { cpu-supply = <&vddcpu>; };
+&cpu2 { cpu-supply = <&vddcpu>; };
+&cpu3 { cpu-supply = <&vddcpu>; };
+
+&pwm_AO_cd {
+	pinctrl-0 = <&pwm_ao_d_e_pins>;
+	pinctrl-names = "default";
+	status = "okay";
+};
+
+&saradc {
+	status = "okay";
+	vref-supply = <&vddio_ao1v8>;
+};
+
+/* eMMC -- same controller pinout as the G12A reference boards. */
+&sd_emmc_c {
+	status = "okay";
+	pinctrl-0 = <&emmc_ctrl_pins>, <&emmc_data_8b_pins>, <&emmc_ds_pins>;
+	pinctrl-1 = <&emmc_clk_gate_pins>;
+	pinctrl-names = "default", "clk-gate";
+
+	bus-width = <8>;
+	cap-mmc-highspeed;
+	mmc-ddr-1_8v;
+	mmc-hs200-1_8v;
+	max-frequency = <200000000>;
+	non-removable;
+	disable-wp;
+
+	mmc-pwrseq = <&emmc_pwrseq>;
+	vmmc-supply = <&vddao_3v3>;
+	vqmmc-supply = <&emmc_1v8>;
+};
+
+/*
+ * I2C bus 2 hosts the charge controller at 0x35 (vendor `check_charger`
+ * env macro polls register 3 of that device). Pin option not confirmed
+ * for the carthing yet — starting with the X-bank pinmux (more common on
+ * G12A reference designs); fall back to Z-bank if 0x35 doesn't ACK.
+ */
+&i2c2 {
+	status = "okay";
+	pinctrl-0 = <&i2c2_sda_z_pins>, <&i2c2_sck_z_pins>;
+	pinctrl-names = "default";
+};
+
+/*
+ * Speculative bring-up of remaining I2C controllers to hunt for the
+ * MFi auth coprocessor (and any other onboard I2C devices we haven't
+ * found yet). Vendor enumerates 5 buses; we drive only i2c2. Trying
+ * default pinmux options below — adjust per probe result.
+ */
+&i2c_AO {
+	status = "okay";
+	pinctrl-0 = <&i2c_ao_sck_pins>, <&i2c_ao_sda_pins>;
+	pinctrl-names = "default";
+};
+&i2c0 {
+	status = "okay";
+	pinctrl-0 = <&i2c0_sda_z0_pins>, <&i2c0_sck_z1_pins>;
+	pinctrl-names = "default";
+};
+&i2c1 {
+	status = "okay";
+	pinctrl-0 = <&i2c1_sda_x_pins>, <&i2c1_sck_x_pins>;
+	pinctrl-names = "default";
+};
+&i2c3 {
+	status = "okay";
+	pinctrl-0 = <&i2c3_sda_a_pins>, <&i2c3_sck_a_pins>;
+	pinctrl-names = "default";
+};
+
+/* Debug console (test-pad mod). 115200n8. */
+&uart_AO {
+	status = "okay";
+	pinctrl-0 = <&uart_ao_a_pins>;
+	pinctrl-names = "default";
+};
+
+/*
+ * Force the three confirmed button GPIOs to gpio_periphs function with
+ * internal pull-up so the button-gpio probe doesn't depend on whatever
+ * pinmux state burn-mode u-boot left them in. Vendor disables internal
+ * pull-ups (external pull-ups exist on the buttons it cares about), but
+ * keeping the internal pull-up enabled here is harmless when an external
+ * one is also present, and protects against floats if it isn't.
+ *
+ */
+&periphs_pinctrl {
+	carthing_btn_pins: carthing-btn {
+		mux {
+			groups = "GPIOA_0", "GPIOA_1", "GPIOA_2", "GPIOA_3",
+				 "GPIOA_5";
+			function = "gpio_periphs";
+			bias-disable;
+			input-enable;
+		};
+	};
+
+	/* Rotary wheel + press pinmux. On this 512MB Car Thing hardware
+	 * revision the encoder's A/B phases live on GPIOZ_8 and GPIOZ_9,
+	 * and the wheel press is on GPIOZ_7. All three get muxed to plain
+	 * gpio_periphs with bias-disable (external pull-ups on the board).
+	 *
+	 * Note: the runtime DTB pulled from a stock 1GB unit shows the
+	 * rotary on Z_9 + Z_10 — that's a *different* hardware rev with
+	 * the pins shifted one bit. See knob_decoder.md for the silicon
+	 * probe that established the 512MB layout for sure. */
+	carthing_wheel_pins: carthing-wheel {
+		mux {
+			groups = "GPIOZ_7", "GPIOZ_8", "GPIOZ_9";
+			function = "gpio_periphs";
+			bias-disable;
+			input-enable;
+		};
+	};
+
+	/*
+	 * BL_EN (GPIOH_4) needs to be forced back to gpio_periphs because
+	 * vendor BL2 may leave it in an alt-function state. Without this
+	 * explicit mux the pwm-backlight `enable-gpios` request silently
+	 * fails to drive the pad.
+	 */
+	carthing_bl_en_pins: carthing-bl-en {
+		mux {
+			groups = "GPIOH_4";
+			function = "gpio_periphs";
+			bias-disable;
+		};
+	};
+};
+
+&ao_pinctrl {
+	/* Menu button (vendor label "mute" but physical cap is menu) on
+	 * the AO GPIO bank — needs its own pinctrl section since &gpio_ao
+	 * is a different controller from &gpio. */
+	carthing_menu_pins: carthing-menu {
+		mux {
+			groups = "GPIOAO_3";
+			function = "gpio_aobus";
+			bias-disable;
+			input-enable;
+		};
+	};
+};
+
+&backlight {
+	pinctrl-0 = <&carthing_bl_en_pins>;
+	pinctrl-names = "default";
+};
+
+/*
+ * Display: ST7701S 480x800 MIPI DSI panel ("lcd_8" in vendor terms).
+ *
+ * Phase D3 wires the DSI host wrapper (meson_dw_mipi_dsi) up to the panel
+ * driver added in commit 8346ed8b33. The panel's reset and power-rail GPIOs
+ * come from the vendor pin map (see memory: carthing-vendor-hw-map):
+ *   - GPIOZ_5 = panel reset (active-low)
+ *   - GPIOZ_6 = panel VCC enable (active-low; driving 0 = powered on)
+ *
+ * The pixel data path through meson_vpu is still TODO (phase D4); for now
+ * D3's success criterion is just that the wrapper probes and the panel
+ * driver binds. A backlight phandle isn't wired up yet either — that's D5.
+ */
+&mipi_analog_dphy {
+	status = "okay";
+};
+
+&mipi_dphy {
+	status = "okay";
+};
+
+&mipi_dsi {
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	panel@0 {
+		compatible = "spotify,carthing-st7701s";
+		reg = <0>;
+		reset-gpios = <&gpio GPIOZ_5 GPIO_ACTIVE_LOW>;
+		vcc-gpios   = <&gpio GPIOZ_6 GPIO_ACTIVE_LOW>;
+		backlight = <&backlight>;
+	};
+};
+
+&pwm_ef {
+	status = "okay";
+	pinctrl-0 = <&pwm_f_h_pins>;
+	pinctrl-names = "default";
+};
+
+/*
+ * USB. The Car Thing's USB-C port is the device-side OTG port (mask
+ * ROM exposes burn mode here at 0x1b8e:0xc003). Vendor uses dr_mode
+ * "otg" which lets the controller flip between host and peripheral.
+ * For u-boot we default to "peripheral" so fastboot / ums work; user
+ * can flip to "host" later via dt fixup or a separate build if needed.
+ *
+ * The G12A SoC has two USB2 phys (one wired to the OTG port, one to a
+ * dedicated host port which the Car Thing doesn't expose), plus a
+ * shared USB3/PCIE phy that vendor leaves disabled. We enable both
+ * USB2 phys here for completeness; only port 0 is electrically wired.
+ */
+&usb {
+	status = "okay";
+	dr_mode = "peripheral";
+};
+
+&usb2_phy0 {
+	status = "okay";
+};
+
+&usb2_phy1 {
+	status = "okay";
+};

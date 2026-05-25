@@ -51,6 +51,25 @@ static const char *reboot_reasons[MAX_REBOOT_REASONS] = {
 	[REBOOT_REASON_WATCHDOG_REBOOT] = "watchdog_reboot",
 };
 
+static int do_sm_set_reboot_reason(struct cmd_tbl *cmdtp, int flag, int argc,
+				   char *const argv[])
+{
+	unsigned int reason;
+	int ret;
+
+	if (argc < 2)
+		return CMD_RET_USAGE;
+
+	reason = simple_strtoul(argv[1], NULL, 0);
+	ret = meson_sm_set_reboot_reason(reason);
+	if (ret) {
+		printf("set_reboot_reason failed: %d\n", ret);
+		return CMD_RET_FAILURE;
+	}
+	printf("reboot reason set to 0x%x\n", reason);
+	return CMD_RET_SUCCESS;
+}
+
 static int do_sm_reboot_reason(struct cmd_tbl *cmdtp, int flag, int argc,
 			       char *const argv[])
 {
@@ -155,6 +174,7 @@ free_buffer:
 static struct cmd_tbl cmd_sm_sub[] = {
 	U_BOOT_CMD_MKENT(serial, 2, 1, do_sm_serial, "", ""),
 	U_BOOT_CMD_MKENT(reboot_reason, 1, 1, do_sm_reboot_reason, "", ""),
+	U_BOOT_CMD_MKENT(set_reboot_reason, 2, 0, do_sm_set_reboot_reason, "", ""),
 	U_BOOT_CMD_MKENT(efuseread, 4, 1, do_efuse_read, "", ""),
 	U_BOOT_CMD_MKENT(efusewrite, 4, 0, do_efuse_write, "", ""),
 	U_BOOT_CMD_MKENT(efusedump, 3, 1, do_efuse_dump, "", ""),

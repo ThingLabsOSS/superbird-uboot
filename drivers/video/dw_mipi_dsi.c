@@ -189,6 +189,18 @@
 
 #define DSI_PHY_STATUS			0xb0
 #define PHY_STOP_STATE_CLK_LANE		BIT(2)
+/*
+ * Data-lane stopstate bits. Unlike the clock lane these are not evenly
+ * spaced: data lane 0 is the only bidirectional lane in LP and so owns an
+ * extra RX-ULPS-escape status bit, which pushes lane 1's stopstate to BIT(7)
+ * rather than BIT(6). Layout confirmed against the Amlogic G12A vendor
+ * headers (BIT_PHY_STOPSTATE{0..3}LANE); this is the standard Synopsys DWC
+ * MIPI-DSI host PHY_STATUS map (shared with rockchip/stm32).
+ */
+#define PHY_STOP_STATE_LANE_0		BIT(4)
+#define PHY_STOP_STATE_LANE_1		BIT(7)
+#define PHY_STOP_STATE_LANE_2		BIT(9)
+#define PHY_STOP_STATE_LANE_3		BIT(11)
 #define PHY_LOCK			BIT(0)
 
 #define DSI_PHY_TST_CTRL0		0xb4
@@ -459,17 +471,105 @@ static void dw_mipi_dsi_video_mode_config(struct dw_mipi_dsi *dsi)
 	dsi_write(dsi, DSI_VID_MODE_CFG, val);
 }
 
+/*
+ * Build the PHY_STATUS mask of data-lane stopstate bits for `lanes` active
+ * data lanes. The bits aren't uniformly spaced (see the defines above), so
+ * enumerate them explicitly rather than computing an offset.
+ */
+static u32 dw_mipi_dsi_data_lane_stop_mask(unsigned int lanes)
+{
+	u32 mask = 0;
+
+	if (lanes >= 1)
+		mask |= PHY_STOP_STATE_LANE_0;
+	if (lanes >= 2)
+		mask |= PHY_STOP_STATE_LANE_1;
+	if (lanes >= 3)
+		mask |= PHY_STOP_STATE_LANE_2;
+	if (lanes >= 4)
+		mask |= PHY_STOP_STATE_LANE_3;
+
+	return mask;
+}
+
+/*
+ * Wait for the DSI link to be genuinely idle before cycling PWR_UP in
+ * dw_mipi_dsi_set_mode().
+ *
+ * The per-command path already waits for the GEN FIFOs to report empty after
+ * every packet, but FIFO-empty only means the host has *accepted* the bytes:
+ * the last LP escape transmission can still be draining on the data lanes, and
+ * the peripheral can still be parsing it. dw_mipi_dsi_set_mode() opens by
+ * writing DSI_PWR_UP=RESET -- if that lands while the final init command is
+ * still in flight, the command is truncated, the panel is left mid-DCS-parse,
+ * and the HS video stream that follows is partly consumed as command
+ * continuation. The result is a corrupted panel register (MADCTL/GIP/COLMOD)
+ * that shifts the image and mangles colour. On a handoff where the OS adopts
+ * the running link without re-initialising the panel, that state sticks for
+ * the whole session. It is timing-dependent, hence rare.
+ *
+ * Both polls return immediately when the link is already idle, so this is a
+ * no-op cost on the command-mode set_mode(0) call and on every normal boot. A
+ * timeout must never block bring-up: log at debug level and continue.
+ */
+static void dw_mipi_dsi_wait_link_idle(struct dw_mipi_dsi *dsi)
+{
+	u32 val, mask;
+	int ret;
+
+	/* 1. Command + payload-write FIFOs drained. */
+	mask = GEN_CMD_EMPTY | GEN_PLD_W_EMPTY;
+	ret = readl_poll_timeout(dsi->base + DSI_CMD_PKT_STATUS, val,
+				 (val & mask) == mask, CMD_PKT_STATUS_TIMEOUT_US);
+	if (ret)
+		dev_dbg(dsi->dsi_host.dev,
+			"link-idle: command FIFO not empty before mode switch\n");
+
+	/* 2. Data lanes back in stopstate (LP-11) -- no LP TX in flight. */
+	mask = dw_mipi_dsi_data_lane_stop_mask(dsi->device->lanes);
+	if (mask) {
+		ret = readl_poll_timeout(dsi->base + DSI_PHY_STATUS, val,
+					 (val & mask) == mask,
+					 PHY_STATUS_TIMEOUT_US);
+		if (ret)
+			dev_dbg(dsi->dsi_host.dev,
+				"link-idle: data lanes not in stopstate before mode switch\n");
+	}
+
+	/* 3. Small guard margin past the polls before we reset the host. */
+	udelay(20);
+}
+
 static void dw_mipi_dsi_set_mode(struct dw_mipi_dsi *dsi,
 				 unsigned long mode_flags)
 {
 	const struct mipi_dsi_phy_ops *phy_ops = dsi->phy_ops;
 
+	/*
+	 * Quiesce the link before resetting the host: the cmd->video transition
+	 * must not interrupt an init command still draining on the lanes (see
+	 * dw_mipi_dsi_wait_link_idle()).
+	 */
+	dw_mipi_dsi_wait_link_idle(dsi);
+
 	dsi_write(dsi, DSI_PWR_UP, RESET);
 
 	if (mode_flags & MIPI_DSI_MODE_VIDEO) {
+		u32 lpclk;
+
 		dsi_write(dsi, DSI_MODE_CFG, ENABLE_VIDEO_MODE);
 		dw_mipi_dsi_video_mode_config(dsi);
-		dsi_write(dsi, DSI_LPCLK_CTRL, PHY_TXREQUESTCLKHS);
+		/*
+		 * In non-continuous mode the controller drives the clock lane
+		 * HS only during HS data bursts, returning to LP between them.
+		 * Some panels (e.g. Sitronix ST7701S) only latch the video
+		 * stream in this mode -- HS continuous keeps the clock lane
+		 * always on and the panel never sees a frame start.
+		 */
+		lpclk = PHY_TXREQUESTCLKHS;
+		if (mode_flags & MIPI_DSI_CLOCK_NON_CONTINUOUS)
+			lpclk |= AUTO_CLKLANE_CTRL;
+		dsi_write(dsi, DSI_LPCLK_CTRL, lpclk);
 	} else {
 		dsi_write(dsi, DSI_MODE_CFG, ENABLE_CMD_MODE);
 	}
@@ -511,7 +611,14 @@ static void dw_mipi_dsi_init_pll(struct dw_mipi_dsi *dsi)
 	 * timeout clock division should be computed with the
 	 * high speed transmission counter timeout and byte lane...
 	 */
-	dsi_write(dsi, DSI_CLKMGR_CFG, TO_CLK_DIVISION(10) |
+	/*
+	 * TO_CLK_DIVISION = 1 matches what Amlogic shipping firmware uses
+	 * (gives the dwc-internal timeout counter divider = byteclk/1 = byteclk
+	 * itself). The previous TO=10 default underclocked the timeout counter
+	 * by 10x relative to what panels validated against vendor firmware
+	 * expect.
+	 */
+	dsi_write(dsi, DSI_CLKMGR_CFG, TO_CLK_DIVISION(1) |
 		  TX_ESC_CLK_DIVISION(esc_clk_division));
 }
 
@@ -693,7 +800,14 @@ static void dw_mipi_dsi_dphy_interface_config(struct dw_mipi_dsi *dsi)
 	 * stop wait time should be the maximum between host dsi
 	 * and panel stop wait times
 	 */
-	dsi_write(dsi, DSI_PHY_IF_CFG, PHY_STOP_WAIT_TIME(0x20) |
+	/*
+	 * PHY_STOP_WAIT_TIME — number of byte clock cycles to wait after data
+	 * lanes leave HS before re-enabling LP. The mainline u-boot default
+	 * 0x20 leaves no margin on some panels; vendor Amlogic boards use
+	 * 0x28 (matches Linux's meson_dw_mipi_dsi when state_change=2). Wider
+	 * margin doesn't hurt other boards.
+	 */
+	dsi_write(dsi, DSI_PHY_IF_CFG, PHY_STOP_WAIT_TIME(0x28) |
 		  N_LANES(device->lanes));
 }
 
@@ -814,13 +928,19 @@ static int dw_mipi_dsi_init(struct udevice *dev,
 	}
 
 	ret = clk_get_by_name(device->dev, "px_clk", &clk);
-	if (ret) {
+	if (ret == -ENODATA || ret == -ENOENT) {
+		/*
+		 * The Meson G12A wrapper drives the pixel clock through HHI
+		 * registers outside u-boot's clock framework, so there's no
+		 * `px_clk` reference in DT. Trust the caller's timings.
+		 */
+	} else if (ret) {
 		dev_err(device->dev, "peripheral clock get error %d\n", ret);
 		return ret;
+	} else {
+		/* get the pixel clock set by the clock framework */
+		timings->pixelclock.typ = clk_get_rate(&clk);
 	}
-
-	/*  get the pixel clock set by the clock framework */
-	timings->pixelclock.typ = clk_get_rate(&clk);
 
 	dw_mipi_dsi_bridge_set(dsi, timings);
 
@@ -831,8 +951,13 @@ static int dw_mipi_dsi_enable(struct udevice *dev)
 {
 	struct dw_mipi_dsi *dsi = dev_get_priv(dev);
 
-	/* Switch to video mode for panel-bridge enable & panel enable */
-	dw_mipi_dsi_set_mode(dsi, MIPI_DSI_MODE_VIDEO);
+	/*
+	 * Switch to video mode for panel-bridge enable & panel enable. Pass
+	 * the full panel-requested mode_flags through so flags like
+	 * MIPI_DSI_CLOCK_NON_CONTINUOUS (toggling AUTO_CLKLANE_CTRL in
+	 * DSI_LPCLK_CTRL) actually take effect.
+	 */
+	dw_mipi_dsi_set_mode(dsi, dsi->device->mode_flags | MIPI_DSI_MODE_VIDEO);
 
 	return 0;
 }

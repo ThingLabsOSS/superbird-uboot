@@ -12,6 +12,7 @@
 #include <fastboot.h>
 #include <net.h>
 #include <usb.h>
+#include <usb_mass_storage.h>	/* for ums_board_abort_check() */
 #include <watchdog.h>
 #include <linux/printk.h>
 #include <linux/stringify.h>
@@ -105,6 +106,12 @@ static int do_fastboot_usb(int argc, char *const argv[],
 			break;
 		if (ctrlc())
 			break;
+		/* Board hook (same one UMS uses) for exit-without-UART —
+		 * e.g. carthing's back button. */
+		if (ums_board_abort_check()) {
+			puts("\rExit requested by board\n");
+			break;
+		}
 		schedule();
 		dm_usb_gadget_handle_interrupts(udc);
 	}

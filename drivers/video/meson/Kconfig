@@ -11,3 +11,30 @@ config VIDEO_MESON
 	imply VIDEO_DAMAGE
 	help
 	  Enable Amlogic Meson Video Processing Unit video support.
+
+config VIDEO_MESON_DW_HDMI
+	bool "Amlogic Meson DesignWare HDMI controller support"
+	depends on VIDEO_MESON
+	default y
+	help
+	  Build the Synopsys DesignWare HDMI controller glue
+	  (drivers/video/meson/meson_dw_hdmi.c plus the shared
+	  drivers/video/dw_hdmi.c core). Disable on boards that have no
+	  HDMI output (e.g. DSI-only displays like the Spotify Car Thing)
+	  to save ~30 KiB of binary size.
+
+config VIDEO_MESON_DW_MIPI_DSI
+	bool "Amlogic Meson G12A DesignWare MIPI DSI host wrapper"
+	depends on VIDEO_MESON
+	select VIDEO_BRIDGE
+	select VIDEO_MIPI_DSI
+	select VIDEO_DW_MIPI_DSI
+	select PHY
+	select MESON_AXG_MIPI_DPHY
+	select MESON_AXG_MIPI_PCIE_ANALOG_PHY
+	help
+	  Amlogic G12A glue for the Synopsys DesignWare MIPI DSI host. The
+	  DWC IP is driven by drivers/video/dw_mipi_dsi.c; this driver owns
+	  the top-level wrapper registers, reset, and clock setup that sit
+	  in front of the DWC core. Pair with an MIPI DSI panel driver
+	  (e.g. VIDEO_LCD_ST7701S_CARTHING).

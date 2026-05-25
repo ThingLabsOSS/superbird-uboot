@@ -86,19 +86,38 @@ static void phy_dsi_analog_enable(struct phy_meson_axg_mipi_pcie_analog_priv *pr
 {
 	u32 reg;
 
+	/*
+	 * Differential reference / common-mode bias values. The mainline u-boot
+	 * defaults (DIF_REF_CTL1=0x1b8, MIPI_CNTL1=0x001e, MIPI_CNTL2 low byte
+	 * 0x459) were derived for the AXG reference designs; on the Spotify
+	 * Car Thing's ST7701S panel they're enough off-spec that the panel's
+	 * HS receivers can't latch the video stream and the LCD stays dark.
+	 *
+	 * The values below match what the shipping vendor firmware programs
+	 * (dumped live from a working stock unit):
+	 *   HHI_MIPI_CNTL0 = 0xa4870008  (DIF_REF_CTL1=0x87, DIF_REF_CTL0=0x8)
+	 *   HHI_MIPI_CNTL1 = 0x0001002e  (CH0_CML_PDR_EN, LP_ABILITY tuned)
+	 *   HHI_MIPI_CNTL2 = 0x2680e45a  (CH_PU/CH_CTL/CH_EN/LP_CTL all tuned)
+	 *
+	 * See superbird-docs/uboot/spotify-carthing-display-notes.md.
+	 *
+	 * TODO: these should arguably be DT-provided per board rather than
+	 * baked into the AXG dphy driver. Hardcoding for now to unblock the
+	 * carthing port; no other in-tree board uses this driver path yet.
+	 */
 	regmap_update_bits(priv->regmap, HHI_MIPI_CNTL0,
 			   HHI_MIPI_CNTL0_DIF_REF_CTL1,
-			   FIELD_PREP(HHI_MIPI_CNTL0_DIF_REF_CTL1, 0x1b8));
+			   FIELD_PREP(HHI_MIPI_CNTL0_DIF_REF_CTL1, 0x87));
 	regmap_update_bits(priv->regmap, HHI_MIPI_CNTL0,
 			   BIT(31), BIT(31));
 	regmap_update_bits(priv->regmap, HHI_MIPI_CNTL0,
 			   HHI_MIPI_CNTL0_DIF_REF_CTL0,
 			   FIELD_PREP(HHI_MIPI_CNTL0_DIF_REF_CTL0, 0x8));
 
-	regmap_write(priv->regmap, HHI_MIPI_CNTL1, 0x001e);
+	regmap_write(priv->regmap, HHI_MIPI_CNTL1, 0x0001002e);
 
 	regmap_write(priv->regmap, HHI_MIPI_CNTL2,
-		     (0x26e0 << 16) | (0x459 << 0));
+		     (0x2680 << 16) | (0x45a << 0));
 
 	reg = DSI_LANE_CLK;
 	switch (priv->config.lanes) {
@@ -219,6 +238,8 @@ int meson_axg_mipi_pcie_analog_probe(struct udevice *dev)
 
 static const struct udevice_id meson_axg_mipi_pcie_analog_ids[] = {
 	{ .compatible = "amlogic,axg-mipi-pcie-analog-phy" },
+	/* G12A uses the same analog dphy block under a different compat name. */
+	{ .compatible = "amlogic,g12a-mipi-dphy-analog" },
 	{ }
 };
 

@@ -366,7 +366,13 @@ int meson_axg_mipi_dphy_probe(struct udevice *dev)
 		return ret;
 
 	ret = clk_enable(&priv->clk);
-	if (ret && ret != -ENOSYS && ret != -ENOTSUPP) {
+	/*
+	 * On G12A in u-boot the CLKID_MIPI_DSI_PHY gate isn't implemented in
+	 * drivers/clk/meson/g12a.c, so clk_enable() returns -ENOENT. Tolerate
+	 * it the same way the existing -ENOSYS / -ENOTSUPP cases are: bringing
+	 * up the PHY block doesn't actually need this gate toggled by u-boot.
+	 */
+	if (ret && ret != -ENOSYS && ret != -ENOTSUPP && ret != -ENOENT) {
 		pr_err("failed to enable PHY clock\n");
 		return ret;
 	}

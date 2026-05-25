@@ -31,11 +31,18 @@
 #define RX_ENDPOINT_MAXIMUM_PACKET_SIZE_1_1  (0x0040)
 #define TX_ENDPOINT_MAXIMUM_PACKET_SIZE      (0x0040)
 
-#define EP_BUFFER_SIZE			4096
+#define EP_BUFFER_SIZE			65536
 /*
  * EP_BUFFER_SIZE must always be an integral multiple of maxpacket size
  * (64 or 512 or 1024), else we break on certain controllers like DWC3
  * that expect bulk OUT requests to be divisible by maxpacket size.
+ *
+ * Bumped from 4096 to 65536 to cut per-transfer USB protocol overhead
+ * by ~16x. The gadget chunks each request into maxpacket-sized USB
+ * packets internally; a bigger request buffer just means more packets
+ * per "queue a transfer" interrupt round-trip. On G12A this brings
+ * fastboot fetch throughput closer to UMS read, and gives flash uploads
+ * a small extra nudge.
  */
 
 struct f_fastboot {
@@ -525,6 +532,65 @@ static void do_acmd_complete(struct usb_ep *ep, struct usb_request *req)
 		fastboot_acmd_complete();
 }
 
+/*
+ * TX path for `fastboot fetch`. After DATA<size> is acked back to the
+ * host, send the partition payload as a sequence of bulk-IN packets
+ * pulled out of the fastboot RAM buffer. When all bytes are out, send
+ * the final OKAY and hand the completion callback back to the regular
+ * fastboot_complete so the next command can be received.
+ */
+static void tx_handler_fetch_chunk(struct usb_ep *ep, struct usb_request *req)
+{
+	char response[FASTBOOT_RESPONSE_LEN] = {0};
+	unsigned int chunk_len;
+	const void *chunk;
+
+	if (req->status != 0) {
+		printf("fetch: bad TX status %d\n", req->status);
+		fastboot_func->in_req->complete = fastboot_complete;
+		return;
+	}
+
+	/* Subsequent calls — previous chunk just landed on the wire. */
+	fastboot_upload_consume(req->length);
+
+	if (fastboot_upload_remaining() == 0) {
+		fastboot_okay(NULL, response);
+		fastboot_func->in_req->complete = fastboot_complete;
+		fastboot_tx_write_str(response);
+		return;
+	}
+
+	chunk = fastboot_upload_get_chunk(EP_BUFFER_SIZE, &chunk_len);
+	fastboot_tx_write(chunk, chunk_len);
+}
+
+static void tx_handler_fetch_start(struct usb_ep *ep, struct usb_request *req)
+{
+	unsigned int chunk_len;
+	const void *chunk;
+
+	if (req->status != 0) {
+		printf("fetch: bad TX status %d on header\n", req->status);
+		fastboot_func->in_req->complete = fastboot_complete;
+		return;
+	}
+
+	/* DATA<size> header was just sent. Kick off the payload stream. */
+	if (fastboot_upload_remaining() == 0) {
+		char response[FASTBOOT_RESPONSE_LEN] = {0};
+
+		fastboot_okay(NULL, response);
+		fastboot_func->in_req->complete = fastboot_complete;
+		fastboot_tx_write_str(response);
+		return;
+	}
+
+	chunk = fastboot_upload_get_chunk(EP_BUFFER_SIZE, &chunk_len);
+	fastboot_func->in_req->complete = tx_handler_fetch_chunk;
+	fastboot_tx_write(chunk, chunk_len);
+}
+
 static void rx_handler_command(struct usb_ep *ep, struct usb_request *req)
 {
 	char *cmdbuf = req->buf;
@@ -553,8 +619,15 @@ static void rx_handler_command(struct usb_ep *ep, struct usb_request *req)
 	}
 
 	if (!strncmp("DATA", response, 4)) {
-		req->complete = rx_handler_dl_image;
-		req->length = rx_bytes_expected(ep);
+		if (cmd == FASTBOOT_COMMAND_FETCH) {
+			/* DATA<size> kicks off the upload TX stream
+			 * (counterpart to the download RX path below). */
+			fastboot_func->in_req->complete =
+				tx_handler_fetch_start;
+		} else {
+			req->complete = rx_handler_dl_image;
+			req->length = rx_bytes_expected(ep);
+		}
 	}
 
 	if (!strncmp("OKAY", response, 4)) {
@@ -571,6 +644,7 @@ static void rx_handler_command(struct usb_ep *ep, struct usb_request *req)
 		case FASTBOOT_COMMAND_REBOOT_BOOTLOADER:
 		case FASTBOOT_COMMAND_REBOOT_FASTBOOTD:
 		case FASTBOOT_COMMAND_REBOOT_RECOVERY:
+		case FASTBOOT_COMMAND_OEM_MASKROM:
 			fastboot_func->in_req->complete = compl_do_reset;
 			break;
 		case FASTBOOT_COMMAND_ACMD:

@@ -40,6 +40,7 @@ enum meson_gx_mmc_compatible {
 #define   CFG_BUS_WIDTH_1		0
 #define   CFG_BUS_WIDTH_4		1
 #define   CFG_BUS_WIDTH_8		2
+#define   CFG_DDR_EN			BIT(2)
 #define   CFG_BL_LEN_MASK		GENMASK(7, 4)
 #define   CFG_BL_LEN_SHIFT		4
 #define   CFG_BL_LEN_512		(9 << 4)
@@ -88,7 +89,6 @@ struct meson_mmc_plat {
 	struct mmc_config cfg;
 	struct mmc mmc;
 	void *regbase;
-	void *w_buf;
 };
 
 #endif

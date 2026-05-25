@@ -6,12 +6,15 @@
  * Author: Neil Armstrong <narmstrong@baylibre.com>
  */
 
+#include <backlight.h>
 #include <display.h>
 #include <dm.h>
 #include <efi_loader.h>
 #include <fdt_support.h>
 #include <log.h>
+#include <panel.h>
 #include <part.h>
+#include <video_bridge.h>
 #include <linux/sizes.h>
 #include <asm/arch/mem.h>
 #include <asm/global_data.h>
@@ -30,7 +33,7 @@ static struct meson_framebuffer {
 	u64 fb_size;
 	unsigned int xsize;
 	unsigned int ysize;
-	bool is_cvbs;
+	enum meson_vpu_output out;
 } meson_fb = { 0 };
 
 bool meson_vpu_is_compatible(struct meson_vpu_priv *priv,
@@ -41,15 +44,44 @@ bool meson_vpu_is_compatible(struct meson_vpu_priv *priv,
 	return compat == family;
 }
 
-static int meson_vpu_setup_mode(struct udevice *dev, struct udevice *disp)
+static int meson_vpu_setup_mode(struct udevice *dev, struct udevice *disp,
+				struct udevice *bridge)
 {
 	struct video_uc_plat *uc_plat = dev_get_uclass_plat(dev);
 	struct video_priv *uc_priv = dev_get_uclass_priv(dev);
 	struct display_timing timing;
-	bool is_cvbs = false;
+	struct udevice *panel = NULL;
+	enum meson_vpu_output out = MESON_VPU_OUT_HDMI;
 	int ret = 0;
 
-	if (disp) {
+	if (bridge) {
+		/*
+		 * The DSI bridge bound its panel as a DT child during bind.
+		 * Probe it directly so we can pull its display_timing — we
+		 * need that before setup_venc/setup_vclk, and the bridge's
+		 * .attach (which we run later) will use the same timing.
+		 */
+		ret = uclass_first_device_err(UCLASS_PANEL, &panel);
+		if (ret) {
+			debug("%s: bridge present but no panel found: %d\n",
+			      __func__, ret);
+			goto cvbs;
+		}
+
+		ret = panel_get_display_timing(panel, &timing);
+		if (ret) {
+			debug("%s: panel_get_display_timing failed: %d\n",
+			      __func__, ret);
+			goto cvbs;
+		}
+
+		out = MESON_VPU_OUT_DSI;
+		uc_priv->xsize = timing.hactive.typ;
+		uc_priv->ysize = timing.vactive.typ;
+		/* Car Thing panel is mounted portrait; we want the console
+		 * to render landscape for the bootloader UI. */
+		uc_priv->rot = 1; /* 90 degrees clockwise */
+	} else if (disp) {
 		ret = display_read_timing(disp, &timing);
 		if (ret) {
 			debug("%s: Failed to read timings\n", __func__);
@@ -65,7 +97,7 @@ static int meson_vpu_setup_mode(struct udevice *dev, struct udevice *disp)
 	} else {
 cvbs:
 		/* CVBS has a fixed 720x480i (NTSC) and 720x576i (PAL) */
-		is_cvbs = true;
+		out = MESON_VPU_OUT_CVBS;
 		timing.flags = DISPLAY_FLAGS_INTERLACED;
 		uc_priv->xsize = 720;
 		uc_priv->ysize = 576;
@@ -73,7 +105,7 @@ cvbs:
 
 	uc_priv->bpix = VPU_MAX_LOG2_BPP;
 
-	meson_fb.is_cvbs = is_cvbs;
+	meson_fb.out = out;
 	meson_fb.xsize = uc_priv->xsize;
 	meson_fb.ysize = uc_priv->ysize;
 
@@ -88,8 +120,40 @@ cvbs:
 	uc_plat->base = meson_fb.base;
 
 	meson_vpu_setup_plane(dev, timing.flags & DISPLAY_FLAGS_INTERLACED);
-	meson_vpu_setup_venc(dev, &timing, is_cvbs);
-	meson_vpu_setup_vclk(dev, &timing, is_cvbs);
+	meson_vpu_setup_venc(dev, &timing, out);
+	meson_vpu_setup_vclk(dev, &timing, out);
+
+	if (out == MESON_VPU_OUT_DSI) {
+		/*
+		 * VENC/VCLK are now feeding the DPI signal toward the DSI
+		 * host. Bring the host up (configures DWC + dphy) and then
+		 * fire the panel init sequence + switch into video mode.
+		 *
+		 * Failures here are non-fatal: the framebuffer is already
+		 * configured and HDMI-style fallbacks are out of scope. We
+		 * just log and continue so we still drop to a CLI prompt.
+		 */
+		ret = video_bridge_attach(bridge);
+		if (ret)
+			log_warning("DSI bridge attach failed: %d\n", ret);
+		else {
+			ret = video_bridge_set_backlight(bridge,
+							 BACKLIGHT_DEFAULT);
+			if (ret)
+				log_warning("DSI panel enable failed: %d\n", ret);
+			/*
+			 * Swap ENCL out of the (still-gated) test-pattern path
+			 * configured by meson_venc_mipi_dsi_mode_set() and
+			 * enable it for the first time, so the VPU framebuffer
+			 * clocks out to the panel. ENCL has stayed gated through
+			 * PHY + panel DCS + video-mode DSI_PWR_UP — enabling it
+			 * here lets the DW host catch ENCL's first VSYNC as its
+			 * frame-0 (see meson_venc_mipi_dsi_mode_set() comment
+			 * on why we deferred ENCL_VIDEO_EN=1 to this point).
+			 */
+			meson_venc_mipi_dsi_video_enable(dev);
+		}
+	}
 
 	video_set_flush_dcache(dev, 1);
 
@@ -107,7 +171,7 @@ static const struct udevice_id meson_vpu_ids[] = {
 static int meson_vpu_probe(struct udevice *dev)
 {
 	struct meson_vpu_priv *priv = dev_get_priv(dev);
-	struct udevice *disp;
+	struct udevice *disp, *bridge;
 	int ret;
 
 	/* Before relocation we don't need to do anything */
@@ -130,10 +194,18 @@ static int meson_vpu_probe(struct udevice *dev)
 
 	meson_vpu_init(dev);
 
-	/* probe the display */
+	/*
+	 * Look for a DSI bridge first (panel output path), then fall back to
+	 * a UCLASS_DISPLAY (HDMI). If neither is present, setup_mode lands on
+	 * the CVBS fallback. Both lookups probe their target as a side effect.
+	 */
+	if (IS_ENABLED(CONFIG_VIDEO_BRIDGE) &&
+	    !uclass_get_device(UCLASS_VIDEO_BRIDGE, 0, &bridge))
+		return meson_vpu_setup_mode(dev, NULL, bridge);
+
 	ret = uclass_get_device(UCLASS_DISPLAY, 0, &disp);
 
-	return meson_vpu_setup_mode(dev, ret ? NULL : disp);
+	return meson_vpu_setup_mode(dev, ret ? NULL : disp, NULL);
 }
 
 static int meson_vpu_bind(struct udevice *dev)
@@ -153,10 +225,18 @@ static void meson_vpu_setup_simplefb(void *fdt)
 	u64 mem_start, mem_size;
 	int offset, ret;
 
-	if (meson_fb.is_cvbs)
+	switch (meson_fb.out) {
+	case MESON_VPU_OUT_CVBS:
 		pipeline = "vpu-cvbs";
-	else
+		break;
+	case MESON_VPU_OUT_DSI:
+		pipeline = "vpu-dsi";
+		break;
+	case MESON_VPU_OUT_HDMI:
+	default:
 		pipeline = "vpu-hdmi";
+		break;
+	}
 
 	offset = meson_simplefb_fdt_match(fdt, pipeline);
 	if (offset < 0) {

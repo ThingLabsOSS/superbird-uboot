@@ -1738,4 +1738,23 @@
 #define VPP_RDARB_MODE 0x3978
 #define VPP_RDARB_REQEN_SLV 0x3979
 
+/*
+ * ENCL / L_ bit-level defines (used by the MIPI DSI panel encoder path).
+ * Bit positions cross-checked with Linux mainline meson_registers.h.
+ */
+#define		ENCL_PX_LN_CNT_SHADOW_EN	BIT(15)
+#define		ENCL_VIDEO_MODE_ADV_VFIFO_EN	BIT(3)
+#define		ENCL_VIDEO_MODE_ADV_GAIN_HDTV	BIT(4)
+#define		ENCL_SEL_GAMMA_RGB_IN		BIT(10)
+#define		ENCL_VIDEO_FILT_CTRL_BYPASS_FILTER	BIT(8)
+#define		ENCL_VIDEO_RGBIN_RGB		(1 << 1)
+#define		ENCL_VIDEO_RGBIN_ZBLK		BIT(0)
+#define		L_GAMMA_CNTL_PORT_EN		BIT(0)
+#define		L_GAMMA_ADDR_PORT_SEL_R		(0 << 8)
+#define		L_GAMMA_ADDR_PORT_SEL_G		(1 << 8)
+#define		L_GAMMA_ADDR_PORT_SEL_B		(2 << 8)
+#define		L_DITH_CNTL_DITH10_EN		BIT(10)
+#define		L_TCON_MISC_SEL_STV1		BIT(8)
+#define		L_TCON_MISC_SEL_STV2		BIT(9)
+
 #endif /* __MESON_REGISTERS_H */

@@ -9,6 +9,7 @@
 #include <dm.h>
 #include <edid.h>
 #include <linux/bitops.h>
+#include <linux/delay.h>
 #include <linux/printk.h>
 #include "meson_vpu.h"
 #include <log.h>
@@ -25,10 +26,49 @@ enum {
 };
 
 /* HHI Registers */
+#define HHI_GP0_PLL_CNTL0	0x040
+#define GP0_PLL_M_SHIFT		0	/* 9 bits */
+#define GP0_PLL_N_SHIFT		10	/* 5 bits */
+#define GP0_PLL_OD_SHIFT	16	/* 2 bits, encodes /2^OD */
+#define GP0_PLL_FRAC_EN		BIT(27)
+#define GP0_PLL_EN		BIT(28)
+#define GP0_PLL_RST		BIT(29)
+#define GP0_PLL_LOCK		BIT(31)
+#define HHI_GP0_PLL_CNTL1	0x044	/* frac, 19 bits */
+#define HHI_GP0_PLL_CNTL2	0x048
+#define HHI_GP0_PLL_CNTL3	0x04c
+#define HHI_GP0_PLL_CNTL4	0x050
+#define HHI_GP0_PLL_CNTL5	0x054
+#define HHI_GP0_PLL_CNTL6	0x058
+/*
+ * HDMI_PLL is the upstream source for VID_PLL_CLK_DIV (a.k.a. "vid_pll_clk")
+ * which feeds VIID_CLK_DIV -> ENCL pclk. Same physical PLL block as
+ * HDMI_PLL despite the name; "HDMI" is historical.
+ */
+#define HHI_HDMI_PLL_CNTL0_G	0x320
+#define HPLL_M_SHIFT		0	/* 9 bits */
+#define HPLL_N_SHIFT		10	/* 5 bits */
+#define HPLL_OD1_SHIFT		16	/* 2 bits */
+#define HPLL_OD2_SHIFT		18	/* 2 bits */
+#define HPLL_OD3_SHIFT		20	/* 2 bits */
+#define HPLL_FRAC_EN		BIT(27)
+#define HPLL_EN			BIT(28)
+#define HPLL_RST		BIT(29)
+#define HPLL_LOCK		BIT(31)
+#define HHI_HDMI_PLL_CNTL1_G	0x324	/* frac */
+#define HHI_HDMI_PLL_CNTL2_G	0x328
+#define HHI_HDMI_PLL_CNTL3_G	0x32c
+#define HHI_HDMI_PLL_CNTL4_G	0x330
+#define HHI_HDMI_PLL_CNTL5_G	0x334
+#define HHI_HDMI_PLL_CNTL6_G	0x338
 #define HHI_VID_PLL_CLK_DIV	0x1a0 /* 0x68 offset in data sheet */
 #define VID_PLL_EN		BIT(19)
 #define VID_PLL_BYPASS		BIT(18)
 #define VID_PLL_PRESET		BIT(15)
+#define HHI_MIPIDSI_PHY_CLK_CNTL	0x254
+#define MIPIDSI_PHY_CLK_SEL_SHIFT	12	/* 3 bits: 4 = GP0_PLL */
+#define MIPIDSI_PHY_CLK_EN		BIT(8)
+#define MIPIDSI_PHY_CLK_DIV_SHIFT	0	/* 7 bits */
 #define HHI_VIID_CLK_DIV	0x128 /* 0x4a offset in data sheet */
 #define VCLK2_DIV_MASK		0xff
 #define VCLK2_DIV_EN		BIT(16)
@@ -62,6 +102,7 @@ enum {
 #define HHI_VID_CLK_CNTL2	0x194 /* 0x65 offset in data sheet */
 #define CTS_ENCI_EN		BIT(0)
 #define CTS_ENCP_EN		BIT(2)
+#define ENCL_GATE_VCLK		BIT(3)
 #define CTS_VDAC_EN		BIT(4)
 #define HDMI_TX_PIXEL_EN	BIT(5)
 #define HHI_HDMI_CLK_CNTL	0x1cc /* 0x73 offset in data sheet */
@@ -1003,18 +1044,145 @@ static void meson_vclk_setup(struct meson_vpu_priv *priv, unsigned int target,
 		       hdmi_use_enci, vic_alternate_clock);
 }
 
+/*
+ * DSI clock setup for the Spotify Car Thing's actual shipping ST7701S panel
+ * (27.918 MHz pclk, 2 lanes, 24 bpp -> ~670 Mbps per-lane HS bit rate).
+ *
+ * Clock topology after this runs:
+ *
+ *   FCLK_DIV3 (fixed_pll/3 = 2 GHz / 3 = ~666.67 MHz)
+ *     -> HHI_MIPIDSI_PHY_CLK_CNTL.sel=0 (FCLK_DIV3), div=/1, en
+ *        -> dphy bit clock = 666.67 MHz (~1 UI = 1.5 ns)
+ *
+ *   xtal (24 MHz)
+ *     -> GP0_PLL (M=111, frac=0x55555, N=1, OD=2) Fvco=2680 MHz, Fout=670 MHz
+ *        -> HHI_VID_PLL_CLK_DIV (bypass)             -> vid_pll_clk 670 MHz
+ *           -> HHI_VIID_CLK_DIV.xd=24                -> vclk2 ~27.9 MHz
+ *              -> HHI_VID_CLK_CNTL2.ENCL_GATE_VCLK   -> ENCL pclk ~27.9 MHz
+ *
+ * The two-source split (FCLK_DIV3 for bit clock, GP0_PLL for pixel clock)
+ * mirrors what the shipping vendor firmware does — the open-source vendor
+ * code uses GP0_PLL for both via different routing, but a live register
+ * dump from a working stock unit shows GP0_PLL in reset state and
+ * MIPIDSI_PHY_CLK_CNTL pointing at FCLK_DIV3. Running the dphy at the
+ * theoretical-minimum bit rate (pclk * bpp / lanes ~= 335 Mbps) kills the
+ * panel; vendor's ~670 Mbps gives roughly 2x headroom and the ST7701S HS
+ * receivers latch reliably.
+ *
+ * See superbird-docs/uboot/spotify-carthing-display-notes.md for the full investigation.
+ *
+ * The dphy analog block (HHI_MIPI_CNTL0/1/2) is programmed separately by
+ * drivers/phy/meson-axg-mipi-pcie-analog.c when the wrapper calls
+ * generic_phy_configure() + generic_phy_power_on() after this.
+ */
+static void meson_vclk_setup_dsi_lcd8(struct meson_vpu_priv *priv)
+{
+	u32 pll_ctrl0;
+	int timeout;
+
+	/* --- 1. Bring up HDMI_PLL (= vid_pll source) at ~670 MHz --- *
+	 *
+	 * On G12A, vid_pll_clk_div's upstream input is the HDMI_PLL physical
+	 * block — the name "vid_pll" is just a historical alias. We need
+	 * HDMI_PLL configured + locked for ENCL to get a pixel clock; if it's
+	 * left in reset (cold boot via burn-mode that didn't run vendor's
+	 * lcd_init), DSI sees no DPI input and the FIFO never drains.
+	 *
+	 * Values mirror vendor's lcd_set_hpll_g12a for the carthing's lcd_8:
+	 *   M = 223 (frac path), N = 1, OD1=OD2=OD3=1 -> /2/2/2 = /8 total
+	 *   Fvco = 24 MHz * (223 + 0xb020/2^19) / 1 ~= 5354 MHz
+	 *   Fout = Fvco / 8 ~= 669 MHz
+	 * which feeds VID_PLL_CLK_DIV bypass -> vid_pll_clk = 669 MHz.
+	 * VIID_CLK_DIV xd=24 below then divides to ~27.9 MHz ENCL pclk.
+	 */
+	pll_ctrl0 = HPLL_EN | HPLL_FRAC_EN |
+		    (223 << HPLL_M_SHIFT)  |
+		    (1   << HPLL_N_SHIFT)  |
+		    (1   << HPLL_OD1_SHIFT) |
+		    (1   << HPLL_OD2_SHIFT) |
+		    (1   << HPLL_OD3_SHIFT) |
+		    (1   << 25); /* clk-out gate per vendor lcd_set_hpll_g12a */
+	hhi_write(HHI_HDMI_PLL_CNTL0_G, pll_ctrl0);
+	hhi_write(HHI_HDMI_PLL_CNTL1_G, 0xb020); /* frac (frac path) */
+	hhi_write(HHI_HDMI_PLL_CNTL2_G, 0);
+	hhi_write(HHI_HDMI_PLL_CNTL3_G, 0x6a285c00);
+	hhi_write(HHI_HDMI_PLL_CNTL4_G, 0x65771290);
+	hhi_write(HHI_HDMI_PLL_CNTL5_G, 0x39272000);
+	hhi_write(HHI_HDMI_PLL_CNTL6_G, 0x56540000);
+
+	hhi_update_bits(HHI_HDMI_PLL_CNTL0_G, HPLL_RST, HPLL_RST);
+	udelay(100);
+	hhi_update_bits(HHI_HDMI_PLL_CNTL0_G, HPLL_RST, 0);
+
+	timeout = 200;
+	while (timeout--) {
+		if (hhi_read(HHI_HDMI_PLL_CNTL0_G) & HPLL_LOCK)
+			break;
+		udelay(50);
+	}
+	if (timeout < 0)
+		pr_err("meson_vpu: HDMI_PLL failed to lock\n");
+
+	/* --- 2. Route FCLK_DIV3 (= fixed_pll/3 = 666.67 MHz) to the dphy --- */
+	hhi_write(HHI_MIPIDSI_PHY_CLK_CNTL,
+		  (0 << MIPIDSI_PHY_CLK_SEL_SHIFT) |	/* sel = FCLK_DIV3 */
+		  MIPIDSI_PHY_CLK_EN |
+		  (0 << MIPIDSI_PHY_CLK_DIV_SHIFT));	/* /1 */
+
+	/* --- 3. Bypass VID_PLL_CLK_DIV (no division of GP0 output) --- */
+	hhi_update_bits(HHI_VID_PLL_CLK_DIV, BIT(19), 0);
+	hhi_update_bits(HHI_VID_PLL_CLK_DIV, BIT(15), 0);
+	hhi_update_bits(HHI_VID_PLL_CLK_DIV, BIT(18), BIT(18));	/* bypass */
+	hhi_update_bits(HHI_VID_PLL_CLK_DIV, BIT(19), BIT(19));	/* enable */
+
+	/* --- 4. VIID_CLK_DIV / _CNTL: xd=24, vid_pll_clk as source, ENCL --- */
+	hhi_update_bits(HHI_VIID_CLK_CNTL, VCLK2_EN, 0);
+	udelay(5);
+
+	/* xd-1 in bits 0:7. xd=24 -> divide 670MHz by 24 -> ~27.9 MHz pclk. */
+	hhi_update_bits(HHI_VIID_CLK_DIV, 0xff, 23);
+
+	hhi_update_bits(HHI_VIID_CLK_CNTL, VCLK2_SEL_MASK,
+			0 << VCLK2_SEL_SHIFT);
+	hhi_update_bits(HHI_VIID_CLK_CNTL, VCLK2_EN, VCLK2_EN);
+	udelay(2);
+
+	hhi_update_bits(HHI_VIID_CLK_DIV, 0xf << 12, 8 << 12);
+	hhi_update_bits(HHI_VIID_CLK_DIV, BIT(16), BIT(16));
+	udelay(5);
+
+	hhi_update_bits(HHI_VIID_CLK_CNTL, VCLK2_DIV1_EN, VCLK2_DIV1_EN);
+	hhi_update_bits(HHI_VIID_CLK_CNTL, VCLK2_SOFT_RESET, VCLK2_SOFT_RESET);
+	udelay(10);
+	hhi_update_bits(HHI_VIID_CLK_CNTL, VCLK2_SOFT_RESET, 0);
+	udelay(5);
+
+	hhi_update_bits(HHI_VID_CLK_CNTL2, ENCL_GATE_VCLK, ENCL_GATE_VCLK);
+}
+
 void meson_vpu_setup_vclk(struct udevice *dev,
-			  const struct display_timing *mode, bool is_cvbs)
+			  const struct display_timing *mode,
+			  enum meson_vpu_output out)
 {
 	struct meson_vpu_priv *priv = dev_get_priv(dev);
 	unsigned int vclk_freq;
 
-	if (is_cvbs)
-		return meson_vclk_setup(priv, MESON_VCLK_TARGET_CVBS,
-					0, 0, 0, false);
-
-	vclk_freq = mode->pixelclock.typ / 1000;
-
-	return meson_vclk_setup(priv, MESON_VCLK_TARGET_DMT,
-				vclk_freq, vclk_freq, vclk_freq, false);
+	switch (out) {
+	case MESON_VPU_OUT_CVBS:
+		meson_vclk_setup(priv, MESON_VCLK_TARGET_CVBS, 0, 0, 0, false);
+		return;
+	case MESON_VPU_OUT_DSI:
+		/*
+		 * Hardcoded for the carthing's lcd_8 panel (31.6 MHz pclk).
+		 * Any other DSI panel would need its own derivation here.
+		 */
+		meson_vclk_setup_dsi_lcd8(priv);
+		return;
+	case MESON_VPU_OUT_HDMI:
+	default:
+		vclk_freq = mode->pixelclock.typ / 1000;
+		meson_vclk_setup(priv, MESON_VCLK_TARGET_DMT,
+				 vclk_freq, vclk_freq, vclk_freq, false);
+		return;
+	}
 }

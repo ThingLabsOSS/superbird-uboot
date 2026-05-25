@@ -51,6 +51,14 @@ static const struct {
 		.dispatch = getvar_downloadsize,
 		.list = true
 	}, {
+		/* max-fetch-size mirrors max-download-size — fetch reads
+		 * into the same fastboot_buf_addr region that download
+		 * writes into, so the limits are identical. The host
+		 * fastboot client probes this var before issuing `fetch`. */
+		.variable = "max-fetch-size",
+		.dispatch = getvar_downloadsize,
+		.list = true
+	}, {
 		.variable = "serialno",
 		.dispatch = getvar_serialno,
 		.list = true
