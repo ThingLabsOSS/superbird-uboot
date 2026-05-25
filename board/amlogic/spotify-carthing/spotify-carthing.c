@@ -422,13 +422,26 @@ static int carthing_load_slot_logo(char slot, u8 *buf)
 }
 
 /*
+ * Resolve the active OS slot from the slot_active env var: 'b' only for
+ * an exact "b", otherwise 'a' (covers unset, garbage, or "a"). Single
+ * source of truth shared by the splash painter, the unbypassable slot
+ * publish in misc_init_r, and the A/B selector — so they can never
+ * disagree about which slot is current.
+ */
+static char resolve_slot(void)
+{
+	const char *active = env_get("slot_active");
+
+	return (active && active[0] == 'b' && active[1] == '\0') ? 'b' : 'a';
+}
+
+/*
  * Paint the boot splash: prefer a partition-supplied /logo.bmp (active
  * slot first, then the other), else the baked-in logo.
  */
 static void carthing_show_splash(struct udevice *dev)
 {
-	const char *active = env_get("slot_active");
-	char slot = (active && active[0] == 'b' && active[1] == '\0') ? 'b' : 'a';
+	char slot = resolve_slot();
 	char order[2] = { slot, (slot == 'a') ? 'b' : 'a' };
 	u8 *buf = (u8 *)CARTHING_LOGO_LOADADDR;
 	int i, n;
@@ -447,11 +460,56 @@ static void carthing_show_splash(struct udevice *dev)
 	carthing_paint_bmp(dev, video_get_u_boot_logo());
 }
 
+/*
+ * Guarantee env vars that booting depends on but that a saved
+ * CONFIG_ENV_IS_IN_FAT uboot.env replaces wholesale (a saved env
+ * overrides the compiled-in environment rather than merging with
+ * CFG_EXTRA_ENV_SETTINGS). A stale, sparse, or foreign saved env can
+ * therefore arrive missing these — so we re-establish them here, on the
+ * unbypassable misc_init_r path, the same way set_boot_source() and
+ * set_serial_from_efuse() force their own state regardless of the env.
+ *
+ * Set-if-absent only: a correct saved env or an explicit user override
+ * still wins, and the A/B selector (do_ab_boot) stays free to rewrite
+ * `slot` per failover when it actually runs.
+ *
+ *  - kernel_comp_addr_r / kernel_comp_size: the decompression buffer for
+ *    a gzipped kernel (extlinux `KERNEL Image.gz`). Defined nowhere in
+ *    our compiled env — spotify-carthing.h's CFG_EXTRA_ENV_SETTINGS
+ *    override drops the meson64.h defaults — so a foreign env lacking
+ *    them dies with "kernel_comp_addr_r or kernel_comp_size is not
+ *    provided!". Values match the known-good wic env; the 0x0a000000..
+ *    0x0e000000 buffer sits between kernel_addr_r (0x08080000, holding
+ *    the compressed Image.gz) and ramdisk_addr_r (0x13000000) on the
+ *    512 MiB part — no collision.
+ *  - slot: extlinux.conf substitutes ${slot} into
+ *    root=PARTLABEL=root_${slot}. do_ab_boot publishes it on the normal
+ *    path, but a foreign bootcmd that never runs ab_boot would otherwise
+ *    leave ${slot} empty (root=PARTLABEL=root_). Publish the resolved
+ *    slot up front so it's never empty regardless of which bootcmd fires.
+ */
+static void carthing_guarantee_env(void)
+{
+	char slot_str[2];
+
+	if (!env_get("kernel_comp_addr_r"))
+		env_set("kernel_comp_addr_r", "0x0a000000");
+	if (!env_get("kernel_comp_size"))
+		env_set("kernel_comp_size", "0x4000000");
+
+	if (!env_get("slot")) {
+		slot_str[0] = resolve_slot();
+		slot_str[1] = '\0';
+		env_set("slot", slot_str);
+	}
+}
+
 int misc_init_r(void)
 {
 	set_serial_from_efuse();
 	set_boot_source();
 	log_charger_state();
+	carthing_guarantee_env();
 	/* g_dnl's default product string is "USB download gadget"; replace
 	 * with the project name. Manufacturer is set at compile time via
 	 * CONFIG_USB_GADGET_MANUFACTURER. */
@@ -751,17 +809,16 @@ U_BOOT_CMD(
 static int do_ab_boot(struct cmd_tbl *cmdtp, int flag, int argc,
 		      char *const argv[])
 {
-	const char *active;
 	char slot, other;
 	char tries_var[16], slot_str[2];
 	long tries;
 	char cmd[160];
 
-	/* 1. Pick the active slot. Default to "a" for an unset or garbage
-	 *    slot_active (corrupt env) rather than failing into an empty
-	 *    boot_ label. */
-	active = env_get("slot_active");
-	slot = (active && active[0] == 'b' && active[1] == '\0') ? 'b' : 'a';
+	/* 1. Pick the active slot via resolve_slot() (shared with the splash
+	 *    painter and misc_init_r's slot publish): 'b' only for an exact
+	 *    "b", else 'a' — so an unset or garbage slot_active can't fail
+	 *    into an empty boot_ label. */
+	slot = resolve_slot();
 	other = (slot == 'a') ? 'b' : 'a';
 
 	/* 2. Read this slot's remaining tries. env_get_ulong returns the

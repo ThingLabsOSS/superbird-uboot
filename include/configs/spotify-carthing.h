@@ -26,6 +26,15 @@
 	"stdin=" STDIN_CFG "\0" \
 	"stdout=" STDOUT_CFG "\0" \
 	"stderr=" STDOUT_CFG "\0" \
+	/* Compressed-kernel decompression buffer. meson64.h defines these,  \
+	 * but our CFG_EXTRA_ENV_SETTINGS override above drops them; without  \
+	 * them a gzipped extlinux KERNEL fails with "kernel_comp_addr_r or   \
+	 * kernel_comp_size is not provided!". misc_init_r also force-sets     \
+	 * these if a saved uboot.env lacks them — this carries them in the   \
+	 * default (no-saved-env) environment too. Buffer 0x0a000000.. sits   \
+	 * between kernel_addr_r and ramdisk_addr_r on the 512 MiB part. */    \
+	"kernel_comp_addr_r=0x0a000000\0" \
+	"kernel_comp_size=0x4000000\0" \
 	"show_console=setenv stdout serial,vidconsole;" \
 	             "setenv stderr serial,vidconsole;" \
 	             "cls\0" \
