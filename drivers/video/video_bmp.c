@@ -293,13 +293,14 @@ int video_bmp_display(struct udevice *dev, ulong bmp_image, int x, int y,
 	}
 
 	/*
-	 * We support displaying 8bpp and 24bpp BMPs on 16bpp LCDs
-	 * and displaying 24bpp BMPs on 32bpp LCDs
+	 * We support displaying 8bpp and 24bpp BMPs on 16bpp LCDs,
+	 * 16bpp and 24bpp BMPs on 32bpp LCDs, and 24bpp BMPs on 16bpp LCDs.
 	 */
 	if (bpix != bmp_bpix &&
 	    !(bmp_bpix == 8 && bpix == 16) &&
 	    !(bmp_bpix == 8 && bpix == 24) &&
 	    !(bmp_bpix == 8 && bpix == 32) &&
+	    !(bmp_bpix == 16 && bpix == 32) &&
 	    !(bmp_bpix == 24 && bpix == 16) &&
 	    !(bmp_bpix == 24 && bpix == 32)) {
 		printf("Error: %d bit/pixel mode, but BMP has %d bit/pixel\n",
@@ -364,11 +365,46 @@ int video_bmp_display(struct udevice *dev, ulong bmp_image, int x, int y,
 			for (i = 0; i < height; ++i) {
 				schedule();
 				for (j = 0; j < width; j++) {
-					*fb++ = *bmap++;
-					*fb++ = *bmap++;
+					if (bpix == 16) {
+						*fb++ = *bmap++;
+						*fb++ = *bmap++;
+					} else {
+						/* RGB565 BMP -> 32bpp framebuffer */
+						u16 pix = bmap[0] | (bmap[1] << 8);
+						u8 r = (pix >> 11) & 0x1f;
+						u8 g = (pix >>  5) & 0x3f;
+						u8 b =  pix        & 0x1f;
+
+						r = (r << 3) | (r >> 2);
+						g = (g << 2) | (g >> 4);
+						b = (b << 3) | (b >> 2);
+						bmap += 2;
+
+						if (eformat == VIDEO_X2R10G10B10) {
+							u32 pixel;
+
+							pixel  = (u32)b <<  2U;
+							pixel |= (u32)g << 12U;
+							pixel |= (u32)r << 22U;
+							*fb++ =  pixel        & 0xff;
+							*fb++ = (pixel >>  8) & 0xff;
+							*fb++ = (pixel >> 16) & 0xff;
+							*fb++ =  pixel >> 24;
+						} else if (eformat == VIDEO_RGBA8888) {
+							*fb++ = r;
+							*fb++ = g;
+							*fb++ = b;
+							*fb++ = 0xff;
+						} else {
+							*fb++ = b;
+							*fb++ = g;
+							*fb++ = r;
+							*fb++ = 0;
+						}
+					}
 				}
 				bmap += (padded_width - width);
-				fb -= width * 2 + priv->line_length;
+				fb -= width * (bpix / 8) + priv->line_length;
 			}
 		}
 		break;
