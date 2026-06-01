@@ -1673,7 +1673,8 @@ static void meson_venc_mipi_dsi_mode_set(struct meson_vpu_priv *priv,
 	writel(0, priv->io_base + _REG(L_RGB_BASE_ADDR));
 	writel(0x400, priv->io_base + _REG(L_RGB_COEFF_ADDR));
 
-	writel(L_DITH_CNTL_DITH10_EN, priv->io_base + _REG(L_DITH_CNTL_ADDR));
+	/* No dither: DITH10 targets a 10-bit output; on this 8-bit panel it adds LSB speckle. */
+	writel(0, priv->io_base + _REG(L_DITH_CNTL_ADDR));
 
 	/* DE signal for TTL */
 	writel(havon_begin, priv->io_base + _REG(L_OEH_HS_ADDR));
