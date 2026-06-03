@@ -12,6 +12,7 @@
 #include <console.h>
 #include <dm.h>
 #include <dm/uclass.h>
+#include <dm/uclass-internal.h>
 #include <fastboot.h>
 #include <fs.h>
 #include <part.h>
@@ -90,6 +91,18 @@ fallback:
 }
 
 /*
+ * Boot-splash smear fix: light a dim glow early, sync the panel onto a black
+ * FB, then paint the logo + ramp the backlight once it locks (board_init /
+ * misc_init_r / apply_saved_brightness). Backlight % is inverted like
+ * cmd_setbright.c (higher = dimmer), and the uclass quantizes onto the DT
+ * levels so the ramp is only a few steps. Tune on-device.
+ */
+#define CARTHING_BOOT_GLOW		100	/* dim glow (inverted PWM: higher = dimmer) */
+#define CARTHING_PANEL_SETTLE_MS	80	/* wait for the panel to lock a clean frame */
+#define CARTHING_RAMP_STEP		4	/* brightness % per ramp tick */
+#define CARTHING_RAMP_STEP_MS		12	/* delay between ramp ticks */
+
+/*
  * Stock firmware fires the backlight on within ~100ms of power-on
  * (before the panel content is initialised) so the user sees the
  * screen visibly lit immediately and "the device is alive". The
@@ -99,9 +112,10 @@ fallback:
  * We mirror the trick from board_init: probe UCLASS_PANEL_BACKLIGHT
  * (which cascades into pwm-meson + the BL_EN gpio + the vddao_3v3
  * regulator — a much narrower dep graph than full video / DSI bringup),
- * then call backlight_enable() to honour the DT's
- * default-brightness-level. The actual UCLASS_VIDEO probe (= ST7701S
- * init sequence) is deferred until whatever consumer needs the panel
+ * then call backlight_enable() + set a dim boot-glow (not the DT
+ * default-brightness-level, which is hardware-max on the inverted PWM) so
+ * the still-uninitialized panel is only faintly lit. The UCLASS_VIDEO probe
+ * (= the ST7701S init sequence) is deferred until a consumer needs the panel
  * (currently: the bootmenu's vidconsole probe). For boots that never
  * enter bootmenu, the panel stays uninit'd but lit by the backlight.
  */
@@ -116,8 +130,12 @@ int board_init(void)
 	 * deferred-init. Order matters: clock controller -> PWM -> bl. */
 	uclass_first_device_err(UCLASS_CLK, &dev);
 	uclass_first_device_err(UCLASS_PWM, &dev);
-	if (!uclass_first_device_err(UCLASS_PANEL_BACKLIGHT, &dev))
+	if (!uclass_first_device_err(UCLASS_PANEL_BACKLIGHT, &dev)) {
 		backlight_enable(dev);
+		/* Dim glow, not DT-max -- hides the uninit garbage + DSI sync
+		 * transient; ramped up in misc_init_r once the panel locks. */
+		backlight_set_brightness(dev, CARTHING_BOOT_GLOW);
+	}
 	return 0;
 }
 
@@ -201,31 +219,77 @@ static void log_charger_state(void)
 }
 
 /*
- * If env has a "brightness" value (set by the bootmenu's brightness
- * cycle or by `setbright` from the CLI, both of which env_save), pass
- * it straight back through `setbright` to apply. setbright itself
- * validates the value, so we don't need to whitelist here — anything
- * setbright accepts (off / low / med / high / max / 0-100) round-trips.
- * Done after the UCLASS_VIDEO probe so the splash has already painted
- * at the DT-default brightness; this nudges it to the saved level.
- * Brief visible step if saved != default; loading env before the
- * early board_init backlight kick isn't feasible since env_relocate
- * runs later.
+ * Resolve a setbright-style level string to a backlight_set_brightness()
+ * percent. The Car Thing PWM is inverted: 0 = brightest, 100 = dimmest
+ * (mirrors cmd_setbright.c).
+ */
+static int brightness_to_percent(const char *v)
+{
+	if (!strcmp(v, "off"))
+		return BACKLIGHT_OFF;
+	if (!strcmp(v, "low"))
+		return 100;
+	if (!strcmp(v, "med") || !strcmp(v, "medium"))
+		return 70;
+	if (!strcmp(v, "high") || !strcmp(v, "max"))
+		return 0;
+	{
+		long n = simple_strtol(v, NULL, 10);
+
+		if (n < 0)
+			n = 0;
+		if (n > 100)
+			n = 100;
+		return (int)n;
+	}
+}
+
+/*
+ * Apply the saved brightness (bootmenu/`setbright`, default "med"), easing up
+ * from the dim boot-glow rather than snapping. Called after the splash paints,
+ * so the ramp lands on the clean logo.
  */
 static void apply_saved_brightness(void)
 {
 	const char *v = env_get("brightness");
-	char cmd[24];
+	struct udevice *bl;
+	int target, cur, step;
 
-	/* If no saved brightness in env, default to "med" — DT's
-	 * default-brightness-level=0 means hardware-max on the inverted
-	 * PWM, which is brighter than most users expect on a fresh boot.
-	 * Medium is a friendlier default; user can flip it from the
-	 * bootmenu Settings screen. */
+	/* No saved value -> "med": DT default-brightness-level=0 is hardware-max
+	 * on the inverted PWM, too bright for a fresh boot. */
 	if (!v || !*v)
 		v = "med";
-	snprintf(cmd, sizeof(cmd), "setbright %s", v);
-	run_command(cmd, 0);
+	target = brightness_to_percent(v);
+
+	if (uclass_first_device_err(UCLASS_PANEL_BACKLIGHT, &bl)) {
+		/* Backlight lookup failed — fall back to the command path so
+		 * the saved level is still honoured (just without the ramp). */
+		char cmd[24];
+
+		snprintf(cmd, sizeof(cmd), "setbright %s", v);
+		run_command(cmd, 0);
+		return;
+	}
+
+	if (target == BACKLIGHT_OFF) {
+		backlight_set_brightness(bl, BACKLIGHT_OFF);
+		return;
+	}
+
+	/* Ease from the dim boot-glow up to the target rather than snapping.
+	 * The PWM is inverted (higher value = dimmer), so brightening means
+	 * stepping the value DOWN toward the target. */
+	cur = CARTHING_BOOT_GLOW;
+	step = (target < cur) ? -CARTHING_RAMP_STEP : CARTHING_RAMP_STEP;
+	while (cur != target) {
+		if ((step < 0 && cur + step < target) ||
+		    (step > 0 && cur + step > target))
+			cur = target;
+		else
+			cur += step;
+		backlight_set_brightness(bl, cur);
+		mdelay(CARTHING_RAMP_STEP_MS);
+	}
 }
 
 static void detect_maskrom_failed(int boot_device);
@@ -535,14 +599,23 @@ int misc_init_r(void)
 	if (env_get_yesno("quick_boot") != 1) {
 		struct udevice *dev;
 
-		/* The probe auto-paints the baked-in logo (show_splash in
-		 * video-uclass.c). Immediately overpaint with a slot's
-		 * /logo.bmp if it has one — same draw coords as the baked-in
-		 * logo, so it covers cleanly, and the panel hasn't synced a
-		 * frame yet so the baked-in one isn't actually shown. */
-		if (!uclass_first_device_err(UCLASS_VIDEO, &dev))
+		/* Set hide_logo before probing so video_post_probe() skips its
+		 * auto-splash and the panel syncs onto the cleared (black) FB --
+		 * nothing on screen for the sync transient to smear. */
+		if (!uclass_find_first_device(UCLASS_VIDEO, &dev) && dev) {
+			struct video_uc_plat *plat = dev_get_uclass_plat(dev);
+
+			plat->hide_logo = true;
+		}
+
+		if (!uclass_first_device_err(UCLASS_VIDEO, &dev)) {
+			/* Let the panel lock a clean (black) frame, then paint the
+			 * logo (slot /logo.bmp, else baked-in). */
+			mdelay(CARTHING_PANEL_SETTLE_MS);
 			carthing_show_splash(dev);
+		}
 	}
+	/* Ramp from the dim boot-glow up to med/saved, now on a clean logo. */
 	apply_saved_brightness();
 	/* Run the boot router BEFORE autoboot fires bootcmd. This is the
 	 * "menu-button-hold always works" guarantee — no matter what

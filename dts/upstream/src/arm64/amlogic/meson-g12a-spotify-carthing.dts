@@ -198,8 +198,17 @@
 	 * Parameters pulled from vendor `board/amlogic/superbird_production/lcd.c`
 	 * ext_lcd_config[] entry for "lcd_8":
 	 *   - PWM_F channel (matches our `&pwm_ef 1`)
-	 *   - 180 Hz carrier (~5.55 ms period); the LED driver IC won't
-	 *     respond to anything in the kHz range
+	 *   - 30 kHz carrier (~33.3 us period) = the stock value. A running
+	 *     stock unit drives PWM_F at 30 kHz (live: reg 0xFFD19004 =
+	 *     0x01E7_0137, high 487 + low 311 = 798 cycles @ 24 MHz = 33.3 us)
+	 *     with the panel lit. 180 Hz also worked but risked visible low-
+	 *     frequency flicker; the kHz range is comfortably flicker-free.
+	 *     NB: we briefly suspected a low carrier was needed to stop white
+	 *     looking grey at min brightness, but sweeping 30k->1k changed
+	 *     nothing -- the DT brightness table + polarity are fixed, so the
+	 *     backlight output per level is identical regardless of period.
+	 *     The min-white difference is the ST7701 gamma curve, not the
+	 *     backlight (see sitronix-st7701s-carthing.c).
 	 *   - BL_PWM_NEGATIVE polarity: physical PWM is active-low, i.e.
 	 *     low duty cycle = bright. We pass polarity=1 in the pwms cells
 	 *     so pwm-meson inverts the duty before driving the pin
@@ -207,7 +216,7 @@
 	 */
 	backlight: backlight {
 		compatible = "pwm-backlight";
-		pwms = <&pwm_ef 1 5555555 1>;
+		pwms = <&pwm_ef 1 33333 1>;	/* 30 kHz = stock (see comment above) */
 		enable-gpios = <&gpio GPIOH_4 GPIO_ACTIVE_HIGH>;
 		/* PWM polarity on this board is inverted at the silicon level
 		 * (pwms third cell = 1) but u-boot's pwm-meson driver doesn't

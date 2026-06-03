@@ -13,7 +13,9 @@
 #include <command.h>
 #include <backlight.h>
 #include <env.h>
+#include <linux/delay.h>
 #include <linux/string.h>
+#include <vsprintf.h>
 #include <dm.h>
 #include <dm/uclass.h>
 
@@ -96,4 +98,66 @@ U_BOOT_CMD(
 	setbright, 2, 1, do_setbright,
 	"set panel backlight brightness",
 	"<off|low|med|high|0-100>"
+);
+
+/*
+ * `blramp` — ramp the backlight between two levels live, for tuning the
+ * boot-splash ease-in (apply_saved_brightness in spotify-carthing.c) without
+ * a rebuild. Levels are backlight_set_brightness() percents, inverted like
+ * setbright (0 = brightest, 100 = dimmest); the uclass quantizes onto the DT
+ * levels so the ramp shows only as many steps as lie between from and to.
+ *
+ *   blramp <from> <to> [step%] [delay_ms]   (default step 4, delay 12 ms)
+ *   e.g. `blramp 100 70` = the boot ramp; `blramp 100 0 2 8` = slower full fade
+ */
+static int do_blramp(struct cmd_tbl *cmdtp, int flag, int argc,
+		     char *const argv[])
+{
+	struct udevice *bl;
+	int from, to, step_mag, delay, cur, step;
+
+	if (argc < 3)
+		return CMD_RET_USAGE;
+
+	from = (int)simple_strtol(argv[1], NULL, 10);
+	to = (int)simple_strtol(argv[2], NULL, 10);
+	step_mag = (argc > 3) ? (int)simple_strtol(argv[3], NULL, 10) : 4;
+	delay = (argc > 4) ? (int)simple_strtol(argv[4], NULL, 10) : 12;
+
+	if (from < 0 || from > 100 || to < 0 || to > 100) {
+		printf("blramp: from/to must be 0..100\n");
+		return CMD_RET_USAGE;
+	}
+	if (step_mag < 1)
+		step_mag = 1;
+	if (delay < 0)
+		delay = 0;
+
+	if (find_backlight(&bl))
+		return CMD_RET_FAILURE;
+
+	printf("blramp: %d -> %d, step %d%%, %d ms/tick\n",
+	       from, to, step_mag, delay);
+
+	backlight_set_brightness(bl, from);
+	cur = from;
+	step = (to < from) ? -step_mag : step_mag;
+	while (cur != to) {
+		if ((step < 0 && cur + step < to) ||
+		    (step > 0 && cur + step > to))
+			cur = to;
+		else
+			cur += step;
+		backlight_set_brightness(bl, cur);
+		if (delay)
+			mdelay(delay);
+	}
+	return 0;
+}
+
+U_BOOT_CMD(
+	blramp, 5, 0, do_blramp,
+	"ramp panel backlight between two levels (tune boot ease-in)",
+	"<from> <to> [step%] [delay_ms]\n"
+	"    levels 0..100 (inverted PWM: 0=brightest, 100=dimmest)"
 );
