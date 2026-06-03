@@ -21,6 +21,18 @@ below.
     DONE 2026-05-12.** ST7701S panel lights up + renders the u-boot
     splash + vidconsole output. See `superbird-docs/uboot/spotify-carthing-display-notes.md`
     for the deep dive; 7 upstream u-boot bugs found+fixed along the way.
+      - **Panel-quality pass (2026-06): DONE.** Replaced the ST7701S init
+        table in `drivers/video/sitronix-st7701s-carthing.c` with the
+        verified *shipping* table (RE'd from stock BL33, cross-checked vs 4
+        sources) — fixes ghosting/retention (VCOM → 0.96 V) and horizontal
+        lines (RTNI 0x07, GIP `9a a0`). Backlight PWM left at stock 30 kHz
+        (a 30k→1k sweep proved min-brightness white is gamma-bound, not
+        PWM-bound). Boot-splash smear killed in `spotify-carthing.c`: panel
+        syncs onto a black FB (set `hide_logo` before the video probe) under
+        a dim glow, then the logo is painted + the backlight ramps once it
+        locks. Added the `blramp` cmd (`cmd_setbright.c`) for live ramp
+        tuning. The B0/B1 gamma toe-lift A/B was tried and reverted (washed
+        the darks, no shadow gain).
   - **Phase 3 — sign+flash our u-boot as BL33, boot at power-on with
     NO vendor BL33: DONE 2026-05-13.** Spotify open-sourced their FIP
     signing key (`aml-user-key.sig` in `spsgsb/uboot`). Combined with
@@ -30,15 +42,27 @@ below.
     (3.6 GiB) is free to repartition. See `## end-to-end install` below
     and the `carthing_secure_boot` / `carthing_fip_replacement` /
     `carthing_emmc_boot_layout` memory entries for the full mechanism.
-  - **Phase 4 — terraform user area to GPT + mainline kernel: in progress.**
-    First full kernel boot 2026-05-15 with joey's 4.9.113 stock-vintage
-    kernel + stock rootfs on our GPT layout — that path is now
-    abandoned; pivoting to a **yocto-based mainline kernel build**
-    (clean slate, build env getting set up fresh on lycaon). Mainline
-    TF-A 2.14 already in as BL31. See `superbird-docs/uboot/phase3-roadmap.md` for the
-    broader kernel-side roadmap. Joey-4.9 + stock-rootfs notes archived
-    (see `memory/MEMORY_archive.md`) — kept for the GPT layout + durable
-    u-boot bugs, not the kernel choice.
+  - **Phase 4 — terraform user area to GPT + mainline kernel: GPT done,
+    kernel now lives in a mature external BSP.** The user-area terraform is
+    proven (GPT: `env + boot_a + root_a + boot_b + root_b + bandaid + data`).
+    The kernel/userspace side is **`JoeyEamigh/yocto-superbird`** (GitHub) —
+    a Yocto stack running mainline **Linux 7.0.2** (`linux-7.0.y` + a small
+    panel/BT/touch/rotary patch stack) under *this* u-boot + signed FIP. It
+    builds a bare BSP, a chromium-kiosk fork-template, and the `bridgething`
+    product, all sharing that GPT layout and an **A/B libswupdate OTA**
+    pipeline (delta/zchunk over the USB link, 3-strike bootloader rollback
+    via `slot_active` in our env). Mainline TF-A 2.14 is BL31. The early
+    joey-4.9.113 + stock-rootfs path (first kernel boot 2026-05-15) is
+    abandoned; notes archived in `memory/MEMORY_archive.md` for the GPT
+    layout + durable u-boot bugs, not the kernel choice. See
+    `superbird-docs/uboot/phase3-roadmap.md` for the broader roadmap.
+      - **Coupling to this repo:** yocto's `superbird-uboot_git.bb` pins
+        `ThingLabsOSS/superbird-uboot.git;branch=master` at a SRCREV (as of
+        2026-06 = our HEAD, the LCD-dither-disable commit). **After pushing
+        u-boot changes (e.g. these panel fixes), bump that SRCREV** for them
+        to reach yocto images. Device interaction there mirrors our rig:
+        mask-rom via `just reboot-to-maskrom`, UART agent holds FT232 RTS
+        deasserted (same reset-pin wiring), host flasher is `flashthing-cli`.
 
 ## end-to-end install (mask-ROM → flashed boot0/1)
 
@@ -62,8 +86,8 @@ listed at the top of this file; this is just the high-level dance.
 5. **Stage + write to boot0/boot1** via fastboot:
    ```
    fastboot stage /tmp/boot.bin
-   fastboot oem console "mmc dev 0 1; mmc write 0x6000000 0 0x1001"
-   fastboot oem console "mmc dev 0 2; mmc write 0x6000000 0 0x1001"
+   fastboot oem console "mmc dev 0 1; mmc write 0x6000000 0 0x1000"
+   fastboot oem console "mmc dev 0 2; mmc write 0x6000000 0 0x1000"
    fastboot oem console "mmc dev 0 0"
    ```
 6. **Wipe user area** to neutralise BL2's earlier fallback paths
@@ -97,9 +121,11 @@ listed at the top of this file; this is just the high-level dance.
 
 ## Hardware facts
 
-The DTS (`arch/arm/dts/meson-g12a-spotify-carthing.dts`) is authoritative
-for buttons, panel, GPIO, regulators, eMMC. Things NOT in DTS or
-otherwise discoverable from the tree:
+The DTS (`dts/upstream/src/arm64/amlogic/meson-g12a-spotify-carthing.dts`
+— the file the build actually consumes; `arch/arm/dts/` only holds the
+`meson-g12a-spotify-carthing-u-boot.dtsi` overlay) is authoritative for
+buttons, panel, GPIO, regulators, eMMC. Things NOT in DTS or otherwise
+discoverable from the tree:
 
   - **SoC**: G12A family. Exact SKU never confirmed via cpuinfo —
     `sei510_defconfig` (S905X2) was the right starting point.
@@ -124,8 +150,9 @@ carthing-stuff/
                             # — inputs for fip-tools, not tracked
 ```
 
-Kernel work lives outside this layout (yocto build on lycaon, fresh
-setup in progress).
+Kernel + userspace work lives outside this layout in the
+**`JoeyEamigh/yocto-superbird`** Yocto BSP (Linux 7.0.2 under this
+u-boot; multi-image with A/B OTA — see Phase 4 above).
 
 ## Things to know about `../superbird-tool`
 
