@@ -13,15 +13,12 @@ as `aml-user-key.sig` in their `spsgsb/uboot` repo. The whole user area
 (3.6 GiB) is freed for repartitioning.
 
 > Sister tooling lives outside this tree:
-> - [`superbird-tool`](../superbird-tool) — pyamlboot wrapper used for
+> - [`superbird-tool`](https://github.com/ThingLabsOSS/superbird-tool) — pyamlboot wrapper used for
 >   mask-ROM USB chainload, vendor burn-mode, RAM-loading our signed FIP.
-> - [`superbird-fip-tools`](../superbird-fip-tools) — `fip-rebuild.sh`
+> - [`superbird-fip-tools`](https://github.com/ThingLabsOSS/superbird-fip-tools) — `fip-rebuild.sh`
 >   (wraps `aml_encrypt_g12a` to produce the signed FIP),
 >   `flash_boot_partition.py` (builds info_sector + hybrid + flashes
->   boot0/boot1), `aml_decrypt.py` (inverse).
-> - [`superbird-docs`](../superbird-docs) — project deep-dives/writeups
->   (`uboot/`) and hardware datasheets (`pdfs/`); kept out of this tree so
->   it can be published separately.
+>   boot0/boot1), `aml_decrypt.py` (inverse)..
 
 ## What works
 
@@ -39,16 +36,6 @@ as `aml-user-key.sig` in their `spsgsb/uboot` repo. The whole user area
   - Custom efuse-derived serial number (matches what stock adb reports).
   - I2C-driven hardware probe: MAX14656 charger, TMD2772 prox/ALS,
     TLSC6X touch+panel-variant detect, Apple MFi 3.0.
-
-## What's next
-
-  - Phase 4 — terraform user area to GPT and bring up a mainline-kernel
-    boot path. The kernel side lives outside this tree
-    (`github.com/JoeyEamigh/spotify-kernel` builds 4.9.113 cleanly;
-    first full kernel boot from our u-boot + GPT happened 2026-05-15).
-    Open: framebuffer G↔B channel swap on saturated colors that kicks
-    in at kernel takeover (see [Display tint OPEN](https://github.com/lmore377)
-    memory for the active investigation).
 
 ## End-to-end install
 
