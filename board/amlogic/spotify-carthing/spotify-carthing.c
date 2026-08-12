@@ -192,22 +192,34 @@ static int carthing_debug_force_console(void)
 EVENT_SPY_SIMPLE(EVT_SETTINGS_R, carthing_debug_force_console);
 
 /*
- * Hold the current screen so it can be read/photographed before a reset
- * that would otherwise be instant. Prints a countdown so it's obvious
- * the device is waiting rather than hung.
+ * Stop here instead of resetting.
+ *
+ * A bootloop destroys its own evidence: the interesting output scrolls
+ * past and the reset wipes the panel a second later, which is exactly
+ * why these units are hard to diagnose remotely. So the debug build
+ * turns every would-be reset into a terminal state with the log still
+ * on screen.
+ *
+ * It halts *into fastboot* rather than spinning, which costs nothing
+ * and means the screen stays frozen for a photo while a host — if there
+ * is one — can still attach and poke at the env, partitions and
+ * `debugreport`. If fastboot can't start or falls out of its loop, spin
+ * rather than return, since returning would let the caller reset.
  */
-static void carthing_debug_pause(const char *why)
+static void carthing_debug_halt(const char *why)
 {
-	int left = CONFIG_CARTHING_DEBUG_PAUSE_MS / 1000;
+	printf("\n*** HALTED: %s ***\n", why);
+	printf("Screen frozen deliberately — this build does not auto-reset.\n");
+	printf("Power-cycle to retry, or attach USB for fastboot.\n");
 
-	printf("\n*** %s ***\n", why);
-	for (; left > 0; left--) {
-		printf("resetting in %d... \n", left);
+	run_command("fastboot 0", 0);
+
+	printf("fastboot exited — halting.\n");
+	for (;;)
 		mdelay(1000);
-	}
 }
 #else
-static inline void carthing_debug_pause(const char *why) { }
+static inline void carthing_debug_halt(const char *why) { }
 #endif
 
 /*
@@ -881,6 +893,21 @@ static void carthing_debug_report(void)
 		printf("part list FAILED — no GPT on mmc 0?\n");
 	printf("=================================\n\n");
 }
+
+static int do_debugreport(struct cmd_tbl *cmdtp, int flag, int argc,
+			  char *const argv[])
+{
+	carthing_debug_report();
+	return 0;
+}
+
+U_BOOT_CMD(
+	debugreport, 1, 1, do_debugreport,
+	"re-print the Car Thing boot diagnostic report",
+	"\n"
+	"  Same report misc_init_r prints at boot. Useful once the boot log\n"
+	"  has scrolled, or over `fastboot oem console \"debugreport\"`."
+);
 #endif /* CONFIG_CARTHING_DEBUG_CONSOLE */
 
 /*
@@ -1134,7 +1161,7 @@ static int do_ab_boot(struct cmd_tbl *cmdtp, int flag, int argc,
 		env_set_ulong(tries_var, AB_DEFAULT_TRIES);
 		if (env_save())
 			printf("AB: WARNING: saveenv failed on failover\n");
-		carthing_debug_pause("A/B failover — slot exhausted");
+		carthing_debug_halt("A/B failover — slot exhausted");
 		run_command("reset", 0);
 		return 0;	/* not reached */
 	}
@@ -1167,7 +1194,7 @@ static int do_ab_boot(struct cmd_tbl *cmdtp, int flag, int argc,
 	 * persisted, so just reboot — the selector re-runs with a lower
 	 * try count and eventually flips. */
 	printf("AB: slot %c boot returned/failed, rebooting\n", slot);
-	carthing_debug_pause("boot failed — sysboot returned");
+	carthing_debug_halt("boot failed — sysboot returned");
 	run_command("reset", 0);
 	return 0;	/* not reached */
 }

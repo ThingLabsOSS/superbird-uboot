@@ -8,6 +8,7 @@ config CARTHING_DEBUG_CONSOLE
 	depends on VIDEO
 	select CONSOLE_MUX
 	select EVENT
+	select LINUX_KERNEL_IMAGE_HEADER
 	help
 	  Build a diagnostic image for units that bootloop with no UART
 	  attached. Everything U-Boot prints — including pre-relocation
@@ -28,19 +29,31 @@ config CARTHING_DEBUG_CONSOLE
 	      reason, env validity, A/B slot state, partition table);
 	    - every path that would silently reset — in particular the
 	      A/B selector's failed-boot and slot-exhausted resets, which
-	      are the usual shape of a bootloop — pauses first so the
-	      screen can be read or photographed.
+	      are the usual shape of a bootloop — halts instead, leaving
+	      the log on screen and fastboot up for a host to attach to.
+	      A bootloop otherwise destroys its own evidence.
+
+	  Also adds the `debugreport` command so the report can be re-run
+	  on demand rather than only at boot.
+
+	  LINUX_KERNEL_IMAGE_HEADER is selected so the resulting u-boot.bin
+	  carries an arm64 Linux Image header. That is what lets a unit
+	  running an *unmodified, already-installed* u-boot chainload this
+	  image over fastboot with `booti` — see doc/board/amlogic/
+	  spotify-carthing-debug.rst. The header replaces the plain
+	  `b reset` at the entry point, so the normal BL2/FIP boot path is
+	  unaffected.
 
 	  This is not meant to ship. Use spotify_carthing_defconfig for
 	  normal builds.
 
-config CARTHING_DEBUG_PAUSE_MS
-	int "Pause before a diagnostic reset (ms)"
-	depends on CARTHING_DEBUG_CONSOLE
-	default 10000
-	help
-	  How long to hold the screen before a reset that would otherwise
-	  be immediate. Long enough to read and photograph, short enough
-	  that the loop still makes progress on its own.
-
 endmenu
+
+# TEXT_OFFSET in the emitted arm64 Image header is
+# CONFIG_TEXT_BASE - CONFIG_LNX_KRNL_IMG_TEXT_OFFSET_BASE, and the symbol
+# has no default of its own (the link fails outright without one). Base 0
+# makes TEXT_OFFSET equal TEXT_BASE, i.e. the header honestly says "load
+# me at RAM base + 0x01000000", which is where this u-boot is linked to
+# run and where booti therefore has to leave it.
+config LNX_KRNL_IMG_TEXT_OFFSET_BASE
+	default 0x0 if CARTHING_DEBUG_CONSOLE
