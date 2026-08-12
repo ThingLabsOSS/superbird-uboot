@@ -110,11 +110,18 @@ static const char *item_label(int i)
 	return items[i].label;
 }
 
-/* Logical (post-rotation) panel size with 16x32 font:
- *   800 / 16 = 50 cols
- *   480 / 32 = 15 rows */
+/* Logical (post-rotation) panel is 800x480; the character grid follows
+ * whichever bitmap font is compiled in. 16x32 is the normal build (50x15
+ * — chunky and readable at arm's length); the debug build drops to 8x16
+ * for twice the log history, and the menu has to track it or every
+ * centred/right-aligned element lands in the top-left quadrant. */
+#if IS_ENABLED(CONFIG_VIDEO_FONT_8X16)
+#define VC_COLS	100
+#define VC_ROWS	30
+#else
 #define VC_COLS	50
 #define VC_ROWS	15
+#endif
 
 /* Vidconsole device handle, looked up once at command start. */
 static struct udevice *vc;

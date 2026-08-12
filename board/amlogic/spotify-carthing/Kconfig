@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: GPL-2.0+
+
+menu "Spotify Car Thing board options"
+	depends on MESON_G12A
+
+config CARTHING_DEBUG_CONSOLE
+	bool "Verbose on-screen debug console"
+	depends on VIDEO
+	select CONSOLE_MUX
+	select EVENT
+	help
+	  Build a diagnostic image for units that bootloop with no UART
+	  attached. Everything U-Boot prints — including pre-relocation
+	  output replayed out of the pre-console buffer — is mirrored to
+	  the LCD instead of just the serial port.
+
+	  Concretely this changes:
+	    - the compiled-in stdout/stderr become "serial,vidconsole",
+	      and an EVT_SETTINGS_R spy re-forces them after the saved
+	      uboot.env is loaded (so a unit whose saved env says
+	      stdout=serial still gets the on-screen console);
+	    - the panel is therefore brought up during console_init_r
+	      rather than misc_init_r, early enough to catch the banner,
+	      DRAM/board info and driver-model probe errors;
+	    - the boot splash is suppressed (a logo painted over the log
+	      helps nobody) and the backlight goes straight to full;
+	    - misc_init_r prints a boot report (boot source, reboot
+	      reason, env validity, A/B slot state, partition table);
+	    - every path that would silently reset — in particular the
+	      A/B selector's failed-boot and slot-exhausted resets, which
+	      are the usual shape of a bootloop — pauses first so the
+	      screen can be read or photographed.
+
+	  This is not meant to ship. Use spotify_carthing_defconfig for
+	  normal builds.
+
+config CARTHING_DEBUG_PAUSE_MS
+	int "Pause before a diagnostic reset (ms)"
+	depends on CARTHING_DEBUG_CONSOLE
+	default 10000
+	help
+	  How long to hold the screen before a reset that would otherwise
+	  be immediate. Long enough to read and photograph, short enough
+	  that the loop still makes progress on its own.
+
+endmenu

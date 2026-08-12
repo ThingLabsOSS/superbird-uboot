@@ -15,9 +15,20 @@
  * etc.) goes only to UART so the panel stays a clean splash. To bring
  * up the on-screen console when needed (boot failure, menu entry,
  * debug), `run show_console` from u-boot CLI or a boot script.
+ *
+ * CONFIG_CARTHING_DEBUG_CONSOLE flips that default: the on-screen
+ * console is live from console_init_r so a UART-less unit shows its
+ * whole boot log on the panel. Note this is only the *compiled* default
+ * — a saved uboot.env carrying stdout=serial would win, so the debug
+ * build also re-forces it from an EVT_SETTINGS_R spy after the env
+ * loads (carthing_debug_force_console() in the board file).
  */
 #undef STDOUT_CFG
+#ifdef CONFIG_CARTHING_DEBUG_CONSOLE
+#define STDOUT_CFG "serial,vidconsole"
+#else
 #define STDOUT_CFG "serial"
+#endif
 #undef STDIN_CFG
 #define STDIN_CFG "serial"
 

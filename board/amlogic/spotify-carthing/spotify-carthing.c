@@ -13,6 +13,7 @@
 #include <dm.h>
 #include <dm/uclass.h>
 #include <dm/uclass-internal.h>
+#include <event.h>
 #include <fastboot.h>
 #include <fs.h>
 #include <part.h>
@@ -20,14 +21,19 @@
 #include <mapmem.h>
 #include <asm/arch/boot.h>
 #include <asm/arch/sm.h>
+#include <asm/global_data.h>
 #include <asm/io.h>
 #include <g_dnl.h>
 #include <linux/ctype.h>
 #include <linux/delay.h>
 #include <linux/string.h>
+#include <version_string.h>
 #include <vsprintf.h>
 
+#include "boardrev.h"
 #include "charger.h"
+
+DECLARE_GLOBAL_DATA_PTR;
 
 int meson_get_boot_device(void);
 
@@ -133,11 +139,76 @@ int board_init(void)
 	if (!uclass_first_device_err(UCLASS_PANEL_BACKLIGHT, &dev)) {
 		backlight_enable(dev);
 		/* Dim glow, not DT-max -- hides the uninit garbage + DSI sync
-		 * transient; ramped up in misc_init_r once the panel locks. */
-		backlight_set_brightness(dev, CARTHING_BOOT_GLOW);
+		 * transient; ramped up in misc_init_r once the panel locks.
+		 * The debug build wants the log legible from its first line,
+		 * so it skips the glow/ramp dance and goes straight to max
+		 * (inverted PWM: 0 = brightest). */
+		backlight_set_brightness(dev,
+					 IS_ENABLED(CONFIG_CARTHING_DEBUG_CONSOLE) ?
+					 0 : CARTHING_BOOT_GLOW);
+	}
+
+	/* Debug build only: the vidconsole in stdout makes console_init_r
+	 * probe UCLASS_VIDEO, which is *before* misc_init_r gets its chance
+	 * to set hide_logo. board_init runs after initr_dm (devices bound,
+	 * none probed), so this is the last hook early enough to stop
+	 * video_post_probe() painting the baked-in logo over the boot log.
+	 * uclass_find_first_device() looks up without probing, so the panel
+	 * bring-up still happens later, on the console's terms. */
+	if (IS_ENABLED(CONFIG_CARTHING_DEBUG_CONSOLE)) {
+		struct udevice *vid;
+
+		if (!uclass_find_first_device(UCLASS_VIDEO, &vid) && vid) {
+			struct video_uc_plat *plat = dev_get_uclass_plat(vid);
+
+			plat->hide_logo = true;
+		}
 	}
 	return 0;
 }
+
+#if IS_ENABLED(CONFIG_CARTHING_DEBUG_CONSOLE)
+/*
+ * Re-force the on-screen console after the saved environment is loaded.
+ *
+ * STDOUT_CFG puts "serial,vidconsole" in the *compiled* env, but a unit
+ * that has ever run `saveenv` (every unit with a yocto install — the A/B
+ * selector saveenv's on every boot) carries stdout=serial in uboot.env,
+ * and initr_env would hand exactly that to console_init_r. Since the
+ * bootlooping units we want to diagnose are precisely the ones with a
+ * saved env, override it here.
+ *
+ * EVT_SETTINGS_R is the right seam: it fires after initr_env and before
+ * stdio_add_devices/console_init_r, so the vidconsole is in stdout by
+ * the time iomux_doenv() goes looking for it (which is what probes
+ * UCLASS_VIDEO and registers the device).
+ */
+static int carthing_debug_force_console(void)
+{
+	env_set("stdout", "serial,vidconsole");
+	env_set("stderr", "serial,vidconsole");
+	return 0;
+}
+EVENT_SPY_SIMPLE(EVT_SETTINGS_R, carthing_debug_force_console);
+
+/*
+ * Hold the current screen so it can be read/photographed before a reset
+ * that would otherwise be instant. Prints a countdown so it's obvious
+ * the device is waiting rather than hung.
+ */
+static void carthing_debug_pause(const char *why)
+{
+	int left = CONFIG_CARTHING_DEBUG_PAUSE_MS / 1000;
+
+	printf("\n*** %s ***\n", why);
+	for (; left > 0; left--) {
+		printf("resetting in %d... \n", left);
+		mdelay(1000);
+	}
+}
+#else
+static inline void carthing_debug_pause(const char *why) { }
+#endif
 
 /*
  * Vendor u-boot's check_charger macro periodically writes 0x8F to
@@ -294,6 +365,12 @@ static void apply_saved_brightness(void)
 
 static void detect_maskrom_failed(int boot_device);
 static void carthing_boot_route(void);
+
+#if IS_ENABLED(CONFIG_CARTHING_DEBUG_CONSOLE)
+static void carthing_debug_report(void);
+#else
+static inline void carthing_debug_report(void) { }
+#endif
 
 /*
  * The G12A mask ROM records the boot source in AO_SEC_GP_CFG0 bits [3:0].
@@ -596,27 +673,38 @@ int misc_init_r(void)
 	 *
 	 * Backlight is kicked on early in board_init() regardless, so the
 	 * device always looks "alive" within ~100 ms of power-on. */
-	if (env_get_yesno("quick_boot") != 1) {
-		struct udevice *dev;
+	/* Debug build: the panel is already up (console_init_r probed it to
+	 * get the vidconsole) and the screen is the log, so there's no
+	 * splash to paint and no glow to ramp out of. Just dump the boot
+	 * report before the router can hand off. */
+	if (IS_ENABLED(CONFIG_CARTHING_DEBUG_CONSOLE)) {
+		carthing_debug_report();
+	} else {
+		if (env_get_yesno("quick_boot") != 1) {
+			struct udevice *dev;
 
-		/* Set hide_logo before probing so video_post_probe() skips its
-		 * auto-splash and the panel syncs onto the cleared (black) FB --
-		 * nothing on screen for the sync transient to smear. */
-		if (!uclass_find_first_device(UCLASS_VIDEO, &dev) && dev) {
-			struct video_uc_plat *plat = dev_get_uclass_plat(dev);
+			/* Set hide_logo before probing so video_post_probe() skips
+			 * its auto-splash and the panel syncs onto the cleared
+			 * (black) FB -- nothing on screen for the sync transient to
+			 * smear. */
+			if (!uclass_find_first_device(UCLASS_VIDEO, &dev) && dev) {
+				struct video_uc_plat *plat =
+					dev_get_uclass_plat(dev);
 
-			plat->hide_logo = true;
+				plat->hide_logo = true;
+			}
+
+			if (!uclass_first_device_err(UCLASS_VIDEO, &dev)) {
+				/* Let the panel lock a clean (black) frame, then
+				 * paint the logo (slot /logo.bmp, else baked-in). */
+				mdelay(CARTHING_PANEL_SETTLE_MS);
+				carthing_show_splash(dev);
+			}
 		}
-
-		if (!uclass_first_device_err(UCLASS_VIDEO, &dev)) {
-			/* Let the panel lock a clean (black) frame, then paint the
-			 * logo (slot /logo.bmp, else baked-in). */
-			mdelay(CARTHING_PANEL_SETTLE_MS);
-			carthing_show_splash(dev);
-		}
+		/* Ramp from the dim boot-glow up to med/saved, now on a clean
+		 * logo. */
+		apply_saved_brightness();
 	}
-	/* Ramp from the dim boot-glow up to med/saved, now on a clean logo. */
-	apply_saved_brightness();
 	/* Run the boot router BEFORE autoboot fires bootcmd. This is the
 	 * "menu-button-hold always works" guarantee — no matter what
 	 * bootcmd is set to (saved env, flashed image, user override),
@@ -674,6 +762,78 @@ static int carthing_take_reboot_reason(void)
 	writel(0, CARTHING_RR_STICKY);
 	return (int)(v & 0xffU);
 }
+
+#if IS_ENABLED(CONFIG_CARTHING_DEBUG_CONSOLE)
+/*
+ * Non-consuming variant for the debug report — carthing_boot_route()
+ * still needs to consume the reason itself a moment later.
+ */
+static int carthing_peek_reboot_reason(void)
+{
+	u32 v = readl(CARTHING_RR_STICKY);
+
+	if ((v & CARTHING_RR_MAGIC_MASK) != CARTHING_RR_MAGIC)
+		return -1;
+	return (int)(v & 0xffU);
+}
+
+static const char *envstr(const char *name)
+{
+	const char *v = env_get(name);
+
+	return (v && *v) ? v : "<unset>";
+}
+
+/*
+ * The diagnostic payload: everything you'd ask a user with a bootlooping
+ * unit for if you had a serial console, printed to the panel before the
+ * boot router gets a chance to hand off.
+ *
+ * Ordered most-to-least likely to explain a loop. The A/B block is first
+ * for a reason — the documented degenerate case of the slot selector
+ * (both slots failing, each flip refilling the other's budget) is an
+ * a<->b oscillation that looks exactly like a bootloop from outside, and
+ * the try counters are the only way to tell it apart from a u-boot-side
+ * crash or a kernel that resets after handoff.
+ */
+static void carthing_debug_report(void)
+{
+	int rr = carthing_peek_reboot_reason();
+	int rev = carthing_probe_board_rev();
+
+	printf("\n===== Car Thing debug build =====\n");
+	printf("%s\n", version_string);
+
+	printf("-- A/B state --\n");
+	printf("slot_active=%s  a_tries=%s  b_tries=%s\n",
+	       envstr("slot_active"), envstr("slot_a_tries"),
+	       envstr("slot_b_tries"));
+	printf("bootcmd=%s\n", envstr("bootcmd"));
+
+	printf("-- boot path --\n");
+	printf("boot device=%d  boot_source=%s  maskrom_failed=%s\n",
+	       meson_get_boot_device(), envstr("boot_source"),
+	       envstr("maskrom_failed"));
+	if (rr < 0)
+		printf("reboot reason=<none> (cold boot or already consumed)\n");
+	else
+		printf("reboot reason=0x%02x\n", rr);
+
+	printf("-- environment --\n");
+	printf("source=%s\n", gd->env_valid == ENV_VALID ?
+	       "uboot.env (saved)" : "built-in defaults");
+	printf("scriptaddr=%s  kernel_comp_addr_r=%s\n",
+	       envstr("scriptaddr"), envstr("kernel_comp_addr_r"));
+
+	printf("-- hardware --\n");
+	printf("board rev=%d  serial#=%s\n", rev, envstr("serial#"));
+
+	printf("-- partitions --\n");
+	if (run_command("part list mmc 0", 0))
+		printf("part list FAILED — no GPT on mmc 0?\n");
+	printf("=================================\n\n");
+}
+#endif /* CONFIG_CARTHING_DEBUG_CONSOLE */
 
 /*
  * Override the upstream default fastboot_set_reboot_flag (which writes
@@ -756,7 +916,20 @@ static void carthing_boot_route(void)
 	boot_source = env_get("boot_source");
 	if (boot_source && !strcmp(boot_source, "usb")) {
 		printf("Boot source: USB (RAM-loaded) — auto-entering fastboot\n");
-		run_command("fastboot_with_screen", 0);
+		/* The debug build stays on the plain fastboot command: the
+		 * FASTBOOT splash would paint over the boot report we just
+		 * printed, and the report is the whole reason a RAM-loaded
+		 * debug image exists. Note this branch means a RAM-loaded
+		 * image never reaches ab_boot on its own — to exercise the
+		 * real boot path (and see it fail) drive it from the host
+		 * with `fastboot oem console "ab_boot"`. */
+		if (IS_ENABLED(CONFIG_CARTHING_DEBUG_CONSOLE)) {
+			printf("Debug build: host can run the real boot path with\n"
+			       "  fastboot oem console \"ab_boot\"\n");
+			run_command("fastboot 0", 0);
+		} else {
+			run_command("fastboot_with_screen", 0);
+		}
 		return;
 	}
 
@@ -913,6 +1086,7 @@ static int do_ab_boot(struct cmd_tbl *cmdtp, int flag, int argc,
 		env_set_ulong(tries_var, AB_DEFAULT_TRIES);
 		if (env_save())
 			printf("AB: WARNING: saveenv failed on failover\n");
+		carthing_debug_pause("A/B failover — slot exhausted");
 		run_command("reset", 0);
 		return 0;	/* not reached */
 	}
@@ -945,6 +1119,7 @@ static int do_ab_boot(struct cmd_tbl *cmdtp, int flag, int argc,
 	 * persisted, so just reboot — the selector re-runs with a lower
 	 * try count and eventually flips. */
 	printf("AB: slot %c boot returned/failed, rebooting\n", slot);
+	carthing_debug_pause("boot failed — sysboot returned");
 	run_command("reset", 0);
 	return 0;	/* not reached */
 }
