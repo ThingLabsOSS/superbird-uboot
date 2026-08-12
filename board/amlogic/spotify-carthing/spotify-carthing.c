@@ -785,6 +785,50 @@ static const char *envstr(const char *name)
 }
 
 /*
+ * Report whether a slot actually has something to boot.
+ *
+ * ab_boot hands `sysboot ... /extlinux/extlinux.conf` to the parser and
+ * treats any return as a failed attempt, so a slot whose boot partition
+ * is missing, unformatted, or half-written by an interrupted OTA loops
+ * pre-handoff and looks identical to a slot whose kernel crashes. These
+ * two files are the invariants sysboot needs; the FDT is named by
+ * extlinux.conf itself so it can't be checked generically here.
+ */
+static void carthing_debug_slot_files(char slot)
+{
+	static const char * const files[] = {
+		"/extlinux/extlinux.conf",
+		"/extlinux/Image",
+	};
+	struct blk_desc *desc = blk_get_dev("mmc", 0);
+	struct disk_partition info;
+	char partname[8], devpart[8];
+	int part, i;
+
+	snprintf(partname, sizeof(partname), "boot_%c", slot);
+	if (!desc) {
+		printf("boot_%c: no mmc 0\n", slot);
+		return;
+	}
+	part = part_get_info_by_name(desc, partname, &info);
+	if (part < 1) {
+		printf("boot_%c: NOT IN PARTITION TABLE\n", slot);
+		return;
+	}
+
+	snprintf(devpart, sizeof(devpart), "0:%d", part);
+	printf("boot_%c=part%d:", slot, part);
+	for (i = 0; i < ARRAY_SIZE(files); i++) {
+		/* fs_exists() consumes the blk dev selection, so re-set it. */
+		bool ok = !fs_set_blk_dev("mmc", devpart, FS_TYPE_ANY) &&
+			  fs_exists(files[i]);
+
+		printf(" %s=%s", files[i], ok ? "ok" : "MISSING");
+	}
+	printf("\n");
+}
+
+/*
  * The diagnostic payload: everything you'd ask a user with a bootlooping
  * unit for if you had a serial console, printed to the panel before the
  * boot router gets a chance to hand off.
@@ -827,6 +871,10 @@ static void carthing_debug_report(void)
 
 	printf("-- hardware --\n");
 	printf("board rev=%d  serial#=%s\n", rev, envstr("serial#"));
+
+	printf("-- boot artifacts --\n");
+	carthing_debug_slot_files('a');
+	carthing_debug_slot_files('b');
 
 	printf("-- partitions --\n");
 	if (run_command("part list mmc 0", 0))
