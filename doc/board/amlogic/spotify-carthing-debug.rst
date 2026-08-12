@@ -36,6 +36,12 @@ Getting it onto a device
 Nothing here writes to the eMMC. Both routes are RAM-only, so a power
 cycle returns the unit to whatever it was doing before.
 
+The build also suppresses ab_boot's ``env_save()``, so running it does
+not burn a try against the slot or otherwise edit ``uboot.env``. That
+matters twice over: the try counters are evidence we came to read, and
+without it the on-screen console setting would persist and the unit
+would keep printing to the panel after going back to a normal build.
+
 Route 1: over fastboot, no disassembly (preferred)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

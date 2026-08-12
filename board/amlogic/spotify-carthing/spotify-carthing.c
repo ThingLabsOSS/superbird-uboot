@@ -1127,6 +1127,34 @@ U_BOOT_CMD(
  */
 #define AB_DEFAULT_TRIES	3
 
+/*
+ * env_save() wrapper that does nothing in the debug build.
+ *
+ * A diagnostic image must not write to the unit it is diagnosing, and
+ * ab_boot's env_save() is the one place this build would. Two ways it
+ * bites, both observed on the bench:
+ *
+ *  - it burns a try against the slot, so merely *looking* at a unit
+ *    pushes it closer to a failover and corrupts the evidence we came
+ *    to read;
+ *  - the EVT_SETTINGS_R spy puts stdout=serial,vidconsole in the
+ *    environment, so the save persists the on-screen console into
+ *    uboot.env — and the unit keeps printing to the panel after it
+ *    goes back to a normal build.
+ *
+ * The in-RAM env_set()s are left alone: the boot still needs `slot`
+ * published for extlinux.conf, and the counters the report prints are
+ * read before any of this runs.
+ */
+static int carthing_env_save(void)
+{
+	if (IS_ENABLED(CONFIG_CARTHING_DEBUG_CONSOLE)) {
+		printf("AB: debug build — NOT saving env (unit left untouched)\n");
+		return 0;
+	}
+	return env_save();
+}
+
 static int do_ab_boot(struct cmd_tbl *cmdtp, int flag, int argc,
 		      char *const argv[])
 {
@@ -1159,7 +1187,7 @@ static int do_ab_boot(struct cmd_tbl *cmdtp, int flag, int argc,
 		env_set("slot_active", slot_str);
 		snprintf(tries_var, sizeof(tries_var), "slot_%c_tries", other);
 		env_set_ulong(tries_var, AB_DEFAULT_TRIES);
-		if (env_save())
+		if (carthing_env_save())
 			printf("AB: WARNING: saveenv failed on failover\n");
 		carthing_debug_halt("A/B failover — slot exhausted");
 		run_command("reset", 0);
@@ -1171,7 +1199,7 @@ static int do_ab_boot(struct cmd_tbl *cmdtp, int flag, int argc,
 	printf("AB: booting slot %c (%ld tries left after this attempt)\n",
 	       slot, tries - 1);
 	env_set_ulong(tries_var, tries - 1);
-	if (env_save())
+	if (carthing_env_save())
 		printf("AB: WARNING: saveenv failed; try counter may not "
 		       "persist across a hang\n");
 
