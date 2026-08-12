@@ -238,44 +238,38 @@ static int carthing_debug_env_save(void)
 }
 
 /*
- * What to do where a normal build would reset. Two different jobs:
+ * Called where a normal build would reset. Never returns — both debug
+ * variants stop dead with the log on screen.
  *
- * TRANSIENT (RAM-loaded or chainloaded, the default): halt. The image is
- * a visitor — it must not reset, because a bootloop destroys its own
- * evidence, and the whole point was to freeze the failure on screen.
- * Halting *into fastboot* keeps the screen frozen for a photo while a
- * host can still attach and run `debugreport`. Never returns; returning
- * would let the caller reset.
+ * A reset is what makes a bootloop undiagnosable: the failure scrolls
+ * past and the panel is wiped a second later, so nobody can photograph
+ * the one screen that explains it. Freezing costs nothing, because the
+ * information we want was already printed by the time we get here.
  *
- * Flashed: pause, then return and let the caller reset. Here the image
- * is the installed bootloader, so A/B has to behave — tries decrement,
- * slots fail over, the unit keeps trying to boot. The pause only makes
- * the screen readable on the way past; it doesn't change the outcome.
+ * The A/B state machine still runs normally in the flashed build — it
+ * just advances one power cycle at a time instead of resetting itself.
+ * The decrement or slot flip has already been persisted by the caller
+ * before this point, so the next power-on picks up exactly where a
+ * self-resetting build would have: fewer tries, or the other slot.
+ * Rollback still works; it just asks for a power button.
+ *
+ * Halting *into fastboot* rather than spinning keeps the screen frozen
+ * for the photo while a host, if there is one, can still attach and run
+ * `debugreport`. Spin if fastboot won't start or falls out of its loop
+ * — returning would let the caller reset.
  */
 static void carthing_debug_stop(const char *why)
 {
-/* Preprocessor, not IS_ENABLED(): both arms of an if() still have to
- * compile, and CONFIG_CARTHING_DEBUG_PAUSE_MS only exists when this is
- * the flashed build. */
-#if !IS_ENABLED(CONFIG_CARTHING_DEBUG_TRANSIENT)
-	int left = CONFIG_CARTHING_DEBUG_PAUSE_MS / 1000;
-
-	printf("\n*** %s ***\n", why);
-	for (; left > 0; left--) {
-		printf("resetting in %d...\n", left);
-		mdelay(1000);
-	}
-#else
 	printf("\n*** HALTED: %s ***\n", why);
 	printf("Screen frozen deliberately — this build does not auto-reset.\n");
-	printf("Power-cycle to retry, or attach USB for fastboot.\n");
+	printf("Take a photo of this screen. Power-cycle to continue booting\n");
+	printf("(A/B state is already saved — the next boot advances).\n");
 
 	run_command("fastboot 0", 0);
 
 	printf("fastboot exited — halting.\n");
 	for (;;)
 		mdelay(1000);
-#endif
 }
 #else
 static inline void carthing_debug_stop(const char *why) { }

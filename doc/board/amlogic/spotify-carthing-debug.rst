@@ -18,32 +18,33 @@ that happened stays on screen to be read or photographed.
 Two variants
 ------------
 
-The diagnostics are the same in both; what differs is whether the image
-is a visitor or the installed bootloader.
+**Both variants halt on a failed boot** rather than resetting. That is
+the whole point: a reset wipes the panel a second after the failure, so
+there is never a screen to photograph. Halting is into fastboot, so the
+image stays frozen for the camera while a host can still attach and run
+``debugreport``.
+
+What differs is whether the image may write to the unit.
 
 ``spotify_carthing_debug_defconfig`` — **transient**, for RAM-loading
-or chainloading. It must not write to the unit it is diagnosing:
-``env_save()`` is suppressed, so try counters keep their values (they
-are the evidence) and the panel console never reaches ``uboot.env``.
-Where a normal build would reset it **halts** instead, with the log on
-screen and fastboot up, because a bootloop that resets erases its own
-evidence.
+or chainloading. It runs once and leaves, so it must not touch the
+unit: ``env_save()`` is suppressed, try counters keep their values
+(they are the evidence) and the panel console never reaches
+``uboot.env``.
 
 ``spotify_carthing_debug_flash_defconfig`` — **flashed**, for writing
-to boot0/boot1. This image *is* the bootloader, so A/B behaves exactly
-as normal: ``env_save()`` works, tries decrement, slots fail over, the
-unit keeps trying to boot. The only difference is a
-``CARTHING_DEBUG_PAUSE_MS`` (default 10 s) countdown before each reset
-so the screen stays readable on the way past. The saved env is still
-kept clean of the panel console — the values are restored around the
-save — so flashing back to a normal build leaves no trace.
+to boot0/boot1. This image *is* the bootloader, so the A/B state
+machine keeps real books: tries decrement, slots fail over, and each
+step is saved *before* the halt. The saved env is still kept clean of
+the panel console — the original values are restored around the save —
+so flashing back to a normal build leaves no trace.
 
-If the flashed bootloader can't hand off, it therefore **keeps
-looping**, at roughly 10 s per cycle instead of instantly, with the
-full log and report visible each time. It burns tries, fails over at
-zero, and settles into the a<->b oscillation the selector is designed
-to degrade into. It does not get stuck, and holding the menu button
-still opens the bootmenu on any cycle.
+So a flashed unit that can't hand off stops on the failure with the log
+up, and **advances one power cycle at a time**: power on, watch it
+fail, photograph it, power-cycle to see the next attempt with one fewer
+try, and eventually the failover to the other slot. Rollback still
+reaches slot b; it just asks for a power button instead of resetting
+itself. Holding the menu button still opens the bootmenu on any cycle.
 
 Building
 --------
