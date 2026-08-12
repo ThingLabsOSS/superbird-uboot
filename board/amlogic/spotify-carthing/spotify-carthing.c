@@ -183,31 +183,89 @@ int board_init(void)
  * the time iomux_doenv() goes looking for it (which is what probes
  * UCLASS_VIDEO and registers the device).
  */
+#define DBG_CONSOLE_DEVS	"serial,vidconsole"
+
+/* What stdout/stderr were before we overrode them, so a flashed build can
+ * put them back around an env_save() and never persist the panel console. */
+static char dbg_orig_stdout[32];
+static char dbg_orig_stderr[32];
+
 static int carthing_debug_force_console(void)
 {
-	env_set("stdout", "serial,vidconsole");
-	env_set("stderr", "serial,vidconsole");
+	const char *out = env_get("stdout");
+	const char *err = env_get("stderr");
+
+	strlcpy(dbg_orig_stdout, (out && *out) ? out : "serial",
+		sizeof(dbg_orig_stdout));
+	strlcpy(dbg_orig_stderr, (err && *err) ? err : "serial",
+		sizeof(dbg_orig_stderr));
+
+	/* GD_FLG_DEVINIT isn't set this early, so on_console() ignores these
+	 * — no re-mux here, just the values console_init_r will read. */
+	env_set("stdout", DBG_CONSOLE_DEVS);
+	env_set("stderr", DBG_CONSOLE_DEVS);
 	return 0;
 }
 EVENT_SPY_SIMPLE(EVT_SETTINGS_R, carthing_debug_force_console);
 
 /*
- * Stop here instead of resetting.
+ * Save the environment without persisting the debug console.
  *
- * A bootloop destroys its own evidence: the interesting output scrolls
- * past and the reset wipes the panel a second later, which is exactly
- * why these units are hard to diagnose remotely. So the debug build
- * turns every would-be reset into a terminal state with the log still
- * on screen.
+ * Only the flashed build gets here (the transient one doesn't save at
+ * all). It has to save for real — it *is* the bootloader, and A/B has to
+ * keep working — but uboot.env must not come away with
+ * stdout=serial,vidconsole, or the unit would still be printing to the
+ * panel after it's flashed back to a normal image.
  *
- * It halts *into fastboot* rather than spinning, which costs nothing
- * and means the screen stays frozen for a photo while a host — if there
- * is one — can still attach and poke at the env, partitions and
- * `debugreport`. If fastboot can't start or falls out of its loop, spin
- * rather than return, since returning would let the caller reset.
+ * So put the original values back across the save. This does re-mux the
+ * live console, because GD_FLG_DEVINIT is set by now and on_console()
+ * acts on the change — the handful of lines env_save() prints go to
+ * serial only, then the panel comes back. Cosmetic, and worth it for a
+ * clean env.
  */
-static void carthing_debug_halt(const char *why)
+static int carthing_debug_env_save(void)
 {
+	int ret;
+
+	env_set("stdout", dbg_orig_stdout);
+	env_set("stderr", dbg_orig_stderr);
+
+	ret = env_save();
+
+	env_set("stdout", DBG_CONSOLE_DEVS);
+	env_set("stderr", DBG_CONSOLE_DEVS);
+	return ret;
+}
+
+/*
+ * What to do where a normal build would reset. Two different jobs:
+ *
+ * TRANSIENT (RAM-loaded or chainloaded, the default): halt. The image is
+ * a visitor — it must not reset, because a bootloop destroys its own
+ * evidence, and the whole point was to freeze the failure on screen.
+ * Halting *into fastboot* keeps the screen frozen for a photo while a
+ * host can still attach and run `debugreport`. Never returns; returning
+ * would let the caller reset.
+ *
+ * Flashed: pause, then return and let the caller reset. Here the image
+ * is the installed bootloader, so A/B has to behave — tries decrement,
+ * slots fail over, the unit keeps trying to boot. The pause only makes
+ * the screen readable on the way past; it doesn't change the outcome.
+ */
+static void carthing_debug_stop(const char *why)
+{
+/* Preprocessor, not IS_ENABLED(): both arms of an if() still have to
+ * compile, and CONFIG_CARTHING_DEBUG_PAUSE_MS only exists when this is
+ * the flashed build. */
+#if !IS_ENABLED(CONFIG_CARTHING_DEBUG_TRANSIENT)
+	int left = CONFIG_CARTHING_DEBUG_PAUSE_MS / 1000;
+
+	printf("\n*** %s ***\n", why);
+	for (; left > 0; left--) {
+		printf("resetting in %d...\n", left);
+		mdelay(1000);
+	}
+#else
 	printf("\n*** HALTED: %s ***\n", why);
 	printf("Screen frozen deliberately — this build does not auto-reset.\n");
 	printf("Power-cycle to retry, or attach USB for fastboot.\n");
@@ -217,9 +275,10 @@ static void carthing_debug_halt(const char *why)
 	printf("fastboot exited — halting.\n");
 	for (;;)
 		mdelay(1000);
+#endif
 }
 #else
-static inline void carthing_debug_halt(const char *why) { }
+static inline void carthing_debug_stop(const char *why) { }
 #endif
 
 /*
@@ -1128,31 +1187,39 @@ U_BOOT_CMD(
 #define AB_DEFAULT_TRIES	3
 
 /*
- * env_save() wrapper that does nothing in the debug build.
+ * env_save() for the A/B selector, which behaves differently depending
+ * on how the running image got here.
  *
- * A diagnostic image must not write to the unit it is diagnosing, and
- * ab_boot's env_save() is the one place this build would. Two ways it
- * bites, both observed on the bench:
+ * Transient debug image (RAM-loaded or chainloaded): don't save at all.
+ * A diagnostic that visits a unit must not write to it. Two ways the
+ * save bit us on the bench: it burns a try against the slot — so merely
+ * *looking* at a unit nudged it toward a failover and corrupted the
+ * evidence we came to read — and it persisted stdout=serial,vidconsole
+ * into uboot.env, leaving the unit printing to the panel long after it
+ * was back on a normal image.
  *
- *  - it burns a try against the slot, so merely *looking* at a unit
- *    pushes it closer to a failover and corrupts the evidence we came
- *    to read;
- *  - the EVT_SETTINGS_R spy puts stdout=serial,vidconsole in the
- *    environment, so the save persists the on-screen console into
- *    uboot.env — and the unit keeps printing to the panel after it
- *    goes back to a normal build.
+ * Flashed debug image: save for real, because it *is* the bootloader
+ * and A/B has to keep working — but route through the wrapper that
+ * keeps the debug console out of the saved env.
  *
- * The in-RAM env_set()s are left alone: the boot still needs `slot`
- * published for extlinux.conf, and the counters the report prints are
- * read before any of this runs.
+ * Normal build: plain env_save().
+ *
+ * The in-RAM env_set()s are left alone in every case: the boot still
+ * needs `slot` published for extlinux.conf, and the report reads the
+ * counters before any of this runs.
  */
 static int carthing_env_save(void)
 {
-	if (IS_ENABLED(CONFIG_CARTHING_DEBUG_CONSOLE)) {
-		printf("AB: debug build — NOT saving env (unit left untouched)\n");
+#if IS_ENABLED(CONFIG_CARTHING_DEBUG_CONSOLE)
+	if (IS_ENABLED(CONFIG_CARTHING_DEBUG_TRANSIENT)) {
+		printf("AB: transient debug build — NOT saving env "
+		       "(unit left untouched)\n");
 		return 0;
 	}
+	return carthing_debug_env_save();
+#else
 	return env_save();
+#endif
 }
 
 static int do_ab_boot(struct cmd_tbl *cmdtp, int flag, int argc,
@@ -1189,7 +1256,7 @@ static int do_ab_boot(struct cmd_tbl *cmdtp, int flag, int argc,
 		env_set_ulong(tries_var, AB_DEFAULT_TRIES);
 		if (carthing_env_save())
 			printf("AB: WARNING: saveenv failed on failover\n");
-		carthing_debug_halt("A/B failover — slot exhausted");
+		carthing_debug_stop("A/B failover — slot exhausted");
 		run_command("reset", 0);
 		return 0;	/* not reached */
 	}
@@ -1222,7 +1289,7 @@ static int do_ab_boot(struct cmd_tbl *cmdtp, int flag, int argc,
 	 * persisted, so just reboot — the selector re-runs with a lower
 	 * try count and eventually flips. */
 	printf("AB: slot %c boot returned/failed, rebooting\n", slot);
-	carthing_debug_halt("boot failed — sysboot returned");
+	carthing_debug_stop("boot failed — sysboot returned");
 	run_command("reset", 0);
 	return 0;	/* not reached */
 }

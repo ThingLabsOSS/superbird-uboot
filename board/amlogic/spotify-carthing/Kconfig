@@ -47,6 +47,39 @@ config CARTHING_DEBUG_CONSOLE
 	  This is not meant to ship. Use spotify_carthing_defconfig for
 	  normal builds.
 
+config CARTHING_DEBUG_TRANSIENT
+	bool "Treat this image as a visitor (RAM-loaded / chainloaded)"
+	depends on CARTHING_DEBUG_CONSOLE
+	default y
+	help
+	  Say y for an image that is RAM-loaded via mask-ROM or chainloaded
+	  over fastboot, i.e. one that runs once and leaves. It must not
+	  write to the unit it is diagnosing: ab_boot's env_save() is
+	  suppressed, so try counters keep their values (they are the
+	  evidence) and the panel console never lands in uboot.env. Where a
+	  normal build would reset, it halts with the log on screen and
+	  fastboot up, because a bootloop that resets erases its own
+	  evidence.
+
+	  Say n to build the same diagnostics into an image meant to be
+	  *flashed* to boot0/boot1. That image is the bootloader, so A/B has
+	  to behave normally — env_save() works, tries decrement, slots fail
+	  over, the unit keeps trying to boot. It only pauses
+	  CARTHING_DEBUG_PAUSE_MS before each reset so the screen stays
+	  readable. The saved env is still kept clean of the panel console,
+	  so flashing back to a normal build leaves no trace.
+
+	  spotify_carthing_debug_defconfig has this y;
+	  spotify_carthing_debug_flash_defconfig has it n.
+
+config CARTHING_DEBUG_PAUSE_MS
+	int "Pause before a reset in the flashed debug image (ms)"
+	depends on CARTHING_DEBUG_CONSOLE && !CARTHING_DEBUG_TRANSIENT
+	default 10000
+	help
+	  Long enough to read and photograph the failure, short enough that
+	  the A/B state machine still makes progress on its own.
+
 config CARTHING_DEBUG_MMC_SLOW
 	bool "Run the eMMC at a conservative speed"
 	depends on CARTHING_DEBUG_CONSOLE

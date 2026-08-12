@@ -15,6 +15,36 @@ the panel. So the failure destroys its own evidence.
 entire boot log to the LCD and refuses to auto-reset, so the last thing
 that happened stays on screen to be read or photographed.
 
+Two variants
+------------
+
+The diagnostics are the same in both; what differs is whether the image
+is a visitor or the installed bootloader.
+
+``spotify_carthing_debug_defconfig`` — **transient**, for RAM-loading
+or chainloading. It must not write to the unit it is diagnosing:
+``env_save()`` is suppressed, so try counters keep their values (they
+are the evidence) and the panel console never reaches ``uboot.env``.
+Where a normal build would reset it **halts** instead, with the log on
+screen and fastboot up, because a bootloop that resets erases its own
+evidence.
+
+``spotify_carthing_debug_flash_defconfig`` — **flashed**, for writing
+to boot0/boot1. This image *is* the bootloader, so A/B behaves exactly
+as normal: ``env_save()`` works, tries decrement, slots fail over, the
+unit keeps trying to boot. The only difference is a
+``CARTHING_DEBUG_PAUSE_MS`` (default 10 s) countdown before each reset
+so the screen stays readable on the way past. The saved env is still
+kept clean of the panel console — the values are restored around the
+save — so flashing back to a normal build leaves no trace.
+
+If the flashed bootloader can't hand off, it therefore **keeps
+looping**, at roughly 10 s per cycle instead of instantly, with the
+full log and report visible each time. It burns tries, fails over at
+zero, and settles into the a<->b oscillation the selector is designed
+to degrade into. It does not get stuck, and holding the menu button
+still opens the bootmenu on any cycle.
+
 Building
 --------
 
@@ -131,9 +161,8 @@ re-runnable at any time with ``debugreport`` (also over
    -- partitions --
    (part list mmc 0)
 
-**A halt instead of a reset.** Both of the A/B selector's resets — the
-failed ``sysboot`` and the slot-exhausted failover — stop with the log
-on screen and bring fastboot up, so a host can still attach.
+**A halt instead of a reset — in the transient build only.** See "Two
+variants" below.
 
 **A slow eMMC.** ``CARTHING_DEBUG_MMC_SLOW`` (default y) drops the eMMC
 out of DDR52/HS200 to plain high-speed SDR at
