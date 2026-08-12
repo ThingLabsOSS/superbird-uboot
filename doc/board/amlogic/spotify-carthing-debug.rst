@@ -135,6 +135,21 @@ re-runnable at any time with ``debugreport`` (also over
 failed ``sysboot`` and the slot-exhausted failover — stop with the log
 on screen and bring fastboot up, so a host can still attach.
 
+**A slow eMMC.** ``CARTHING_DEBUG_MMC_SLOW`` (default y) drops the eMMC
+out of DDR52/HS200 to plain high-speed SDR at
+``CARTHING_DEBUG_MMC_MAX_HZ`` (default 26 MHz), by deleting the caps
+from ``sd_emmc_c`` in the u-boot DT overlay. Marginal flash or a bad
+BGA joint can read reliably at 26 MHz and only intermittently at DDR52,
+which surfaces as a ``sysboot`` that can't load the kernel — another
+pre-handoff loop that looks like a broken image. So this doubles as a
+test: **if a unit loops on the normal build and boots on this one, the
+eMMC is the fault, not the software.** Bus width stays at 8 on purpose,
+so only one variable moves.
+
+Scope is u-boot only. Stock BL2 has already loaded the FIP before this
+DT exists, and Linux uses its own DT from the boot partition, so
+neither runs slower.
+
 Reading the result
 ------------------
 

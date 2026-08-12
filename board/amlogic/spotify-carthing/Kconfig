@@ -47,6 +47,37 @@ config CARTHING_DEBUG_CONSOLE
 	  This is not meant to ship. Use spotify_carthing_defconfig for
 	  normal builds.
 
+config CARTHING_DEBUG_MMC_SLOW
+	bool "Run the eMMC at a conservative speed"
+	depends on CARTHING_DEBUG_CONSOLE
+	default y
+	help
+	  Drop the eMMC out of DDR52/HS200 and down to a plain high-speed
+	  SDR clock for the duration of u-boot.
+
+	  A marginal eMMC — aged flash, a cold-solder BGA joint, a board
+	  that only misbehaves warm — can read reliably at 26 MHz SDR and
+	  intermittently at DDR52. That failure lands as a sysboot that
+	  can't load the kernel, which ab_boot counts as a failed attempt
+	  and turns into a pre-handoff bootloop indistinguishable from a
+	  broken image. Running the diagnostic slowly makes the difference
+	  testable: if a unit that loops on the normal build boots on this
+	  one, the eMMC is the problem, not the software.
+
+	  Only affects u-boot. Stock BL2 loads the FIP before any of this
+	  applies, and Linux gets its own DT from the boot partition, so
+	  neither changes speed.
+
+config CARTHING_DEBUG_MMC_MAX_HZ
+	int "eMMC max frequency in the debug build (Hz)"
+	depends on CARTHING_DEBUG_MMC_SLOW
+	default 26000000
+	help
+	  26 MHz is the MMC high-speed SDR rate and a good first step down
+	  from DDR52. Drop to 400000 to force the initialisation clock —
+	  slow enough to read a genuinely sick device, and slow enough
+	  that loading a kernel takes visible seconds.
+
 endmenu
 
 # TEXT_OFFSET in the emitted arm64 Image header is
