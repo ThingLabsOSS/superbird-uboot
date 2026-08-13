@@ -33,6 +33,25 @@ enum meson_gx_mmc_compatible {
 #define   CLK_TX_PHASE_090		(1 << 10)
 #define   CLK_TX_PHASE_180		(2 << 10)
 #define   CLK_TX_PHASE_270		(3 << 10)
+#define   CLK_CO_PHASE_SHIFT		8
+#define   CLK_TX_PHASE_SHIFT		10
+/*
+ * RX sampling phase and the two delay lines. Upstream defines neither,
+ * so meson_mmc_config_clock() has always written them as zero: data is
+ * sampled at 0 degrees with no delay, on every SoC and every eMMC part.
+ * The vendor driver tunes both per unit (rxclk_rx_phase/rxclk_rx_delay).
+ *
+ * Delay-line width and therefore the always-on bit position differ by
+ * generation — GX has 4-bit delays with always_on at 24, G12A has 6-bit
+ * delays with always_on at 28. CLK_ALWAYS_ON below is the GX value and
+ * is unused by this driver; on G12A bit 24 would land inside rx_delay.
+ */
+#define   CLK_RX_PHASE_SHIFT		12
+#define   CLK_RX_PHASE_MASK		GENMASK(13, 12)
+#define   CLK_V3_TX_DELAY_SHIFT		16
+#define   CLK_V3_TX_DELAY_MASK		GENMASK(21, 16)
+#define   CLK_V3_RX_DELAY_SHIFT		22
+#define   CLK_V3_RX_DELAY_MASK		GENMASK(27, 22)
 #define   CLK_ALWAYS_ON			BIT(24)
 
 #define MESON_SD_EMMC_CFG		0x44
@@ -90,5 +109,19 @@ struct meson_mmc_plat {
 	struct mmc mmc;
 	void *regbase;
 };
+
+/* Sentinel meaning "leave at the driver's historic default". */
+#define MESON_PHASE_DEFAULT	0xff
+
+struct meson_mmc_phase {
+	u8 core;	/* 0-3 = 0/90/180/270 degrees, or MESON_PHASE_DEFAULT */
+	u8 tx;
+	u8 rx;
+	u8 tx_delay;	/* 0-63, 200 ps steps (G12A); 0 = none */
+	u8 rx_delay;
+};
+
+void meson_mmc_set_phase(const struct meson_mmc_phase *p);
+void meson_mmc_get_phase(struct meson_mmc_phase *p);
 
 #endif

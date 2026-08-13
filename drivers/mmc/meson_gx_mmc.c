@@ -43,6 +43,31 @@ static inline void meson_write(struct mmc *mmc, uint32_t val, int offset)
 	writel(val, get_regbase(mmc) + offset);
 }
 
+/*
+ * Host-side clock phase / delay-line settings, applied on every
+ * set_ios. Defaults reproduce the long-standing hardcoded behaviour;
+ * meson_mmc_set_phase() lets a board sweep them to find the window a
+ * given eMMC part actually needs. See meson_gx_mmc.h for the register
+ * layout and why RX was never programmed.
+ */
+struct meson_mmc_phase meson_phase = {
+	.core = MESON_PHASE_DEFAULT,
+	.tx = MESON_PHASE_DEFAULT,
+	.rx = MESON_PHASE_DEFAULT,
+	.tx_delay = 0,
+	.rx_delay = 0,
+};
+
+void meson_mmc_set_phase(const struct meson_mmc_phase *p)
+{
+	meson_phase = *p;
+}
+
+void meson_mmc_get_phase(struct meson_mmc_phase *p)
+{
+	*p = meson_phase;
+}
+
 static void meson_mmc_config_clock(struct mmc *mmc)
 {
 	uint32_t meson_mmc_clk = 0;
@@ -69,17 +94,42 @@ static void meson_mmc_config_clock(struct mmc *mmc)
 	 * Other SoCs use CLK_CO_PHASE_180 by default.
 	 * It needs to find what is a proper value about each SoCs.
 	 */
+	if (meson_phase.core == MESON_PHASE_DEFAULT) {
 #if CONFIG_IS_ENABLED(DM_MMC)
-	if (meson_gx_mmc_is_compatible(mmc->dev, MMC_COMPATIBLE_SM1))
-		meson_mmc_clk |= CLK_CO_PHASE_270;
-	else
-		meson_mmc_clk |= CLK_CO_PHASE_180;
+		if (meson_gx_mmc_is_compatible(mmc->dev, MMC_COMPATIBLE_SM1))
+			meson_mmc_clk |= CLK_CO_PHASE_270;
+		else
+			meson_mmc_clk |= CLK_CO_PHASE_180;
 #else /* U-Boot SPL on GX SoCs */
-	meson_mmc_clk |= CLK_CO_PHASE_180;
+		meson_mmc_clk |= CLK_CO_PHASE_180;
 #endif
+	} else {
+		meson_mmc_clk |= meson_phase.core << CLK_CO_PHASE_SHIFT;
+	}
 
-	/* 180 phase tx clock */
-	meson_mmc_clk |= CLK_TX_PHASE_000;
+	/* TX phase: 0 degrees historically (the comment below used to say
+	 * 180, which the code never did). */
+	meson_mmc_clk |= (meson_phase.tx == MESON_PHASE_DEFAULT ? 0 :
+			  meson_phase.tx) << CLK_TX_PHASE_SHIFT;
+
+	/*
+	 * RX sampling phase and delay lines. Zero unless someone has tuned
+	 * them — which reproduces the historic behaviour exactly, but is
+	 * only correct by luck: it is one fixed sampling point for every
+	 * eMMC part. Field units with a different flash part than the one
+	 * this was implicitly tuned against fail to read at DDR52 while
+	 * reading fine slowly, and fine under Linux, which tunes.
+	 */
+	if (meson_phase.rx != MESON_PHASE_DEFAULT)
+		meson_mmc_clk |= meson_phase.rx << CLK_RX_PHASE_SHIFT;
+	if (meson_phase.rx_delay)
+		meson_mmc_clk |= (meson_phase.rx_delay <<
+				  CLK_V3_RX_DELAY_SHIFT) &
+				 CLK_V3_RX_DELAY_MASK;
+	if (meson_phase.tx_delay)
+		meson_mmc_clk |= (meson_phase.tx_delay <<
+				  CLK_V3_TX_DELAY_SHIFT) &
+				 CLK_V3_TX_DELAY_MASK;
 
 	/* clock settings */
 	meson_mmc_clk |= clk_src;
