@@ -383,8 +383,15 @@ void mmc_do_preinit(void)
 		if (!m)
 			continue;
 
-		m->user_speed_mode = MMC_MODES_END;  /* Initialising user set speed mode */
-
+		/*
+		 * Deliberately NOT resetting user_speed_mode here.
+		 * mmc_bind() already initialises it to MMC_MODES_END, so the
+		 * only thing this reset can do is discard a mode set between
+		 * bind and now — e.g. by a board that pins a conservative
+		 * speed for the boot path from an EVT_DM_POST_PROBE hook.
+		 * Debugged the hard way: the pin was applied, verified set,
+		 * and then silently reverted to MMC_MODES_END right here.
+		 */
 		if (m->preinit)
 			mmc_start_init(m);
 	}

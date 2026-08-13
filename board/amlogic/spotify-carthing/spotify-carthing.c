@@ -149,28 +149,6 @@ int board_init(void)
 					 0 : CARTHING_BOOT_GLOW);
 	}
 
-	/* Pin the eMMC slow before anything reads it. The first access is
-	 * the env load at initr_env, which is *earlier* than misc_init_r —
-	 * so this has to happen here, and the block device has to exist,
-	 * which means probing the MMC controller ourselves rather than
-	 * waiting for initr_mmc. Same explicit-dependency-walk trick as the
-	 * backlight above; initr_mmc then finds it already probed.
-	 *
-	 * No re-init: the card hasn't been initialised yet, so the first
-	 * init picks the pin up. Soft-fail — if the probe order ever
-	 * changes under us the unit boots fast rather than not at all, and
-	 * the boot report prints the mode actually negotiated so a silent
-	 * fallback is visible rather than assumed. */
-	if (IS_ENABLED(CONFIG_CARTHING_MMC_SLOW_BOOT)) {
-		struct udevice *mmc_dev;
-
-		if (uclass_get_device(UCLASS_MMC, CARTHING_MMC_DEV, &mmc_dev))
-			printf("eMMC: probe failed; leaving bus speed alone\n");
-		else
-			carthing_mmc_set_mode(CONFIG_CARTHING_MMC_BOOT_MODE,
-					      false);
-	}
-
 	/* Debug build only: the vidconsole in stdout makes console_init_r
 	 * probe UCLASS_VIDEO, which is *before* misc_init_r gets its chance
 	 * to set hide_logo. board_init runs after initr_dm (devices bound,

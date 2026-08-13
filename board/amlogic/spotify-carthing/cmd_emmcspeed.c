@@ -31,6 +31,8 @@
 #include <blk.h>
 #include <command.h>
 #include <dm.h>
+#include <dm/device.h>
+#include <event.h>
 #include <mmc.h>
 #include <vsprintf.h>
 #include <linux/errno.h>
@@ -41,6 +43,61 @@
 /* Whether the boot-time pin is in effect, so fast_for_host() knows what
  * to fall back to and doesn't churn the card when nothing was pinned. */
 static bool mmc_pinned_slow;
+
+/* Diagnostics for the boot-time pin: whether the probe hook fired at all
+ * and which device seq it saw. The first attempt at this pin failed
+ * silently, so make the next failure self-reporting. */
+static int mmc_hook_hits;
+static int mmc_hook_seq = -1;
+
+
+#if IS_ENABLED(CONFIG_CARTHING_MMC_SLOW_BOOT)
+/*
+ * Apply the boot-time speed pin the moment the eMMC controller probes.
+ *
+ * board_init() is too early to do this by hand — the block device isn't
+ * reachable there yet, and the attempt silently soft-failed, leaving
+ * units booting at DDR52 while claiming to be pinned (caught on the
+ * bench: `mmcphase` reported DDR52 on a build that should have been at
+ * 26 MHz). And misc_init_r is too late, because the env load at
+ * initr_env already touched the card.
+ *
+ * EVT_DM_POST_PROBE has neither problem: it fires exactly when the
+ * controller comes up, wherever that lands in the init order, and
+ * `struct mmc` exists by then. Setting user_speed_mode directly avoids
+ * depending on the block-device lookup that failed before.
+ */
+static int carthing_mmc_post_probe(void *ctx, struct event *event)
+{
+	struct udevice *dev = event->data.dm.dev;
+	struct mmc *m;
+
+	if (device_get_uclass_id(dev) != UCLASS_MMC)
+		return 0;
+
+	mmc_hook_hits++;
+	mmc_hook_seq = dev_seq(dev);
+
+	if (dev_seq(dev) != CARTHING_MMC_DEV)
+		return 0;
+
+	m = mmc_get_mmc_dev(dev);
+	if (!m)
+		return 0;
+
+	m->user_speed_mode = CONFIG_CARTHING_MMC_BOOT_MODE;
+	mmc_pinned_slow = true;
+
+	/* If the card somehow initialised during probe, redo it so the pin
+	 * actually applies rather than taking effect on some later re-init. */
+	if (m->has_init) {
+		m->has_init = 0;
+		mmc_init(m);
+	}
+	return 0;
+}
+EVENT_SPY_FULL(EVT_DM_POST_PROBE, carthing_mmc_post_probe);
+#endif
 
 int carthing_mmc_set_mode(enum bus_mode mode, bool reinit)
 {
@@ -115,6 +172,16 @@ static int do_emmcspeed(struct cmd_tbl *cmdtp, int flag, int argc,
 
 	if (argc < 2) {
 		printf("eMMC is in %s\n", carthing_mmc_current_mode());
+		{
+			struct mmc *m = find_mmc_device(CARTHING_MMC_DEV);
+
+			printf("boot pin: %s (probe hook fired %dx, seq %d)\n",
+			       mmc_pinned_slow ? "active" : "not active",
+			       mmc_hook_hits, mmc_hook_seq);
+			if (m && m->user_speed_mode != MMC_MODES_END)
+				printf("pinned to bus_mode index %d\n",
+				       m->user_speed_mode);
+		}
 		return 0;
 	}
 

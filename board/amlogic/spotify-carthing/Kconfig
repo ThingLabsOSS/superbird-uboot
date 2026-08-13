@@ -79,6 +79,7 @@ config CARTHING_MMC_SLOW_BOOT
 	bool "Pin the eMMC to a conservative speed for the boot path"
 	depends on CARTHING_DEBUG_CONSOLE
 	select MMC_SPEED_MODE_SET
+	select DM_EVENT
 	default y
 	help
 	  Run the eMMC in a slow single-data-rate mode while booting, and
