@@ -18,6 +18,7 @@
 #include <part.h>
 #include <video.h>
 #include <mapmem.h>
+#include <mmc.h>
 #include <asm/arch/boot.h>
 #include <asm/arch/sm.h>
 #include <asm/io.h>
@@ -568,10 +569,52 @@ static void carthing_guarantee_env(void)
 	}
 }
 
+/*
+ * Report the eMMC bus mode, and shout if it isn't the one we expect.
+ *
+ * Asking for a mode and getting it are different things: if a mode is
+ * advertised but the switch fails, u-boot's mmc core quietly falls back
+ * to a slower one and reports success. That is not hypothetical — a
+ * Kioxia 004GA0 unit negotiates legacy when offered DDR52, and the only
+ * symptom is that everything is mysteriously slow, or on a marginal
+ * part, that kernel-sized reads fail while small ones don't.
+ *
+ * With DDR52 removed from the DT the expected mode is HS52. Anything
+ * below that means the bus is degraded and this board is a candidate
+ * for the pre-handoff bootloop, so say so on the console and publish
+ * `emmc_mode` in the environment — that makes it readable without a
+ * UART, via `fastboot oem console "printenv emmc_mode"`, the bootmenu,
+ * or fw_printenv from Linux.
+ */
+static void carthing_report_mmc_mode(void)
+{
+	struct mmc *mmc = find_mmc_device(0);
+	const char *name;
+
+	if (!mmc || !mmc->has_init) {
+		env_set("emmc_mode", "uninitialised");
+		printf("eMMC: not initialised\n");
+		return;
+	}
+
+	name = mmc_mode_name(mmc->selected_mode);
+	env_set("emmc_mode", name);
+
+	if (mmc->selected_mode < MMC_HS_52) {
+		printf("eMMC: WARNING - bus degraded to %s (expected %s)\n",
+		       name, mmc_mode_name(MMC_HS_52));
+		printf("eMMC: the mode switch failed; reads may be slow or\n");
+		printf("eMMC: unreliable. Report this along with `mmc info`.\n");
+	} else {
+		printf("eMMC: %s\n", name);
+	}
+}
+
 int misc_init_r(void)
 {
 	set_serial_from_efuse();
 	set_boot_source();
+	carthing_report_mmc_mode();
 	log_charger_state();
 	carthing_guarantee_env();
 	/* g_dnl's default product string is "USB download gadget"; replace

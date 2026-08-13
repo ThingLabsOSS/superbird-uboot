@@ -38,3 +38,34 @@
 &pwm_ab {
 	compatible = "amlogic,meson-g12a-ee-pwm";
 };
+
+/*
+ * Do not offer DDR52 to the mmc core.
+ *
+ * The eMMC parts fitted to this board are not interchangeable at DDR52
+ * under this driver. Measured with a 16 MiB sustained read:
+ *
+ *            Samsung S40004      Kioxia 004GA0
+ *   HS 26M   23.4 MB/s           23.4 MB/s
+ *   HS52     38.5 MB/s           45.4 MB/s
+ *   DDR52    42.4 MB/s           mode switch fails -> falls back
+ *
+ * On the Kioxia part the DDR52 switch does not complete, and u-boot's
+ * mmc core silently drops to legacy (22.9 MB/s) and reports success.
+ * Units where that switch half-succeeds instead get no fallback: small
+ * reads work, a kernel-sized read does not, and the board bootloops
+ * before handoff while looking healthy to `mmc rescan`.
+ *
+ * HS52 is single-data-rate, works on both parts, and is *faster* than
+ * DDR52 on Kioxia and within 9% of it on Samsung — so removing DDR52
+ * costs essentially nothing and removes the failure mode. The driver
+ * already strips HS200/HS400 (no tuning support) and caps f_max at
+ * 52 MHz, so with mmc-ddr-1_8v gone the best remaining mode is HS52.
+ *
+ * Deleting the DT property rather than masking caps in code keeps this
+ * where the rest of the bus configuration lives, and re-enabling it for
+ * an experiment is a one-line revert.
+ */
+&sd_emmc_c {
+	/delete-property/ mmc-ddr-1_8v;
+};
