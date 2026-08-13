@@ -261,6 +261,18 @@ static void __maybe_unused getvar_partition_size(char *part_name, char *response
 {
 	int r;
 	size_t size;
+	u32 vlen = 0;
+
+	/*
+	 * The host client asks for partition-size before it will issue a
+	 * fetch, so a board-served virtual target has to answer here too
+	 * or `fastboot fetch` refuses with "Invalid partition size".
+	 * Passing a NULL buffer means "just the length".
+	 */
+	if (!fastboot_fetch_virtual(part_name, NULL, 0, &vlen)) {
+		fastboot_response("OKAY", response, "0x%016zx", (size_t)vlen);
+		return;
+	}
 
 	r = getvar_get_part_info(part_name, response, &size);
 	if (r >= 0)

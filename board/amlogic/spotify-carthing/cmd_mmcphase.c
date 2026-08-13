@@ -96,6 +96,38 @@ static int phase_try(const struct meson_mmc_phase *p, bool quiet)
 	return 0;
 }
 
+/*
+ * Sweep rx phase x rx delay and print it as a grid — '.' passes, 'X'
+ * fails. A grid rather than a line per result because the shape of the
+ * window is the finding: a healthy part passes everywhere, and a unit
+ * that only reads at a few settings is the case we are hunting.
+ */
+void carthing_mmc_phase_scan(void)
+{
+	struct meson_mmc_phase p, saved;
+	int rx, d;
+
+	meson_mmc_get_phase(&saved);
+
+	printf("rx_delay:");
+	for (d = 0; d < 64; d += 4)
+		printf("%3d", d);
+	printf("\n");
+
+	for (rx = 0; rx < 4; rx++) {
+		printf("%6s: ", phase_name(rx));
+		for (d = 0; d < 64; d += 4) {
+			meson_mmc_get_phase(&p);
+			p.rx = rx;
+			p.rx_delay = d;
+			printf("%3s", phase_try(&p, true) ? "X" : ".");
+		}
+		printf("\n");
+	}
+
+	phase_try(&saved, true);
+}
+
 static int do_mmcphase(struct cmd_tbl *cmdtp, int flag, int argc,
 		       char *const argv[])
 {
@@ -135,26 +167,8 @@ static int do_mmcphase(struct cmd_tbl *cmdtp, int flag, int argc,
 	 * worth defaulting to.
 	 */
 	if (!strcmp(argv[1], "scan")) {
-		int rx, delay, ok = 0;
-
-		printf("scanning rx phase x rx delay at current speed...\n");
-		for (rx = 0; rx < 4; rx++) {
-			for (delay = 0; delay < 64; delay += 4) {
-				meson_mmc_get_phase(&p);
-				p.rx = rx;
-				p.rx_delay = delay;
-				if (!phase_try(&p, true)) {
-					printf("  PASS rx=%-3s rx_delay=%2d (%d ps)\n",
-					       phase_name(rx), delay,
-					       delay * 200);
-					ok++;
-				}
-			}
-		}
-		printf("%d passing combinations\n", ok);
-		if (!ok)
-			printf("none passed — try a slower mode first\n");
-		return ok ? 0 : CMD_RET_FAILURE;
+		carthing_mmc_phase_scan();
+		return 0;
 	}
 
 	if (argc < 4)

@@ -75,6 +75,26 @@ config CARTHING_DEBUG_TRANSIENT
 	  spotify_carthing_debug_defconfig has this y;
 	  spotify_carthing_debug_flash_defconfig has it n.
 
+config CARTHING_AUTOPROBE
+	bool "Run the hardware probe automatically at boot"
+	depends on CARTHING_DEBUG_CONSOLE
+	help
+	  Build a single-purpose diagnostic image: at boot it runs the
+	  `probe` command by itself — eMMC identity, rail voltages, A/B
+	  state, a sustained 16 MiB read at each bus speed, and the rx
+	  phase x delay window at DDR52 — then waits in fastboot with the
+	  report held in RAM.
+
+	  The owner of a bootlooping unit then needs two commands and no
+	  understanding of any of this:
+
+	    (chainload or ramboot the image)
+	    fastboot fetch probe report.txt
+
+	  Nothing is written to the device; the report is served from RAM
+	  through a virtual fetch target. Implies TRANSIENT, since an
+	  image that probes on every boot has no business being flashed.
+
 config CARTHING_MMC_SLOW_BOOT
 	bool "Pin the eMMC to a conservative speed for the boot path"
 	depends on CARTHING_DEBUG_CONSOLE

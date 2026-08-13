@@ -32,6 +32,7 @@
 
 #include "boardrev.h"
 #include "carthing_mmc.h"
+void carthing_probe_run(void);
 #include "charger.h"
 
 DECLARE_GLOBAL_DATA_PTR;
@@ -746,6 +747,16 @@ int misc_init_r(void)
 	 * report before the router can hand off. */
 	if (IS_ENABLED(CONFIG_CARTHING_DEBUG_CONSOLE)) {
 		carthing_debug_report();
+		/* Probe image: do the whole measurement now, then sit in
+		 * fastboot holding the report. Never returns — the boot
+		 * router below must not get a chance to boot an OS on a
+		 * unit somebody is trying to diagnose. */
+		if (IS_ENABLED(CONFIG_CARTHING_AUTOPROBE)) {
+			carthing_probe_run();
+			printf("\nProbe done. Waiting in fastboot.\n");
+			for (;;)
+				run_command("fastboot 0", 0);
+		}
 	} else {
 		if (env_get_yesno("quick_boot") != 1) {
 			struct udevice *dev;

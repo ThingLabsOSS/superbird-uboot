@@ -741,6 +741,24 @@ void fastboot_upload_consume(unsigned int len)
 }
 
 /**
+ * fastboot_fetch_virtual() - let a board serve a fetch target that
+ * isn't a partition.
+ *
+ * Called before the partition lookup. Copy up to @bufsz bytes into
+ * @buf, set *@out_len, and return 0 to serve the request; return
+ * -ENOENT to fall through to the normal partition path.
+ *
+ * Exists so a diagnostic image can hand a report back over the same
+ * `fastboot fetch` the host already has, without inventing a transport
+ * or writing anything to the eMMC it is diagnosing.
+ */
+__weak int fastboot_fetch_virtual(const char *name, void *buf, u32 bufsz,
+				  u32 *out_len)
+{
+	return -ENOENT;
+}
+
+/**
  * fetch() - Implement the AOSP `fastboot fetch` command. Reads bytes
  * from a partition into the fastboot RAM buffer and replies DATA<size>;
  * the gadget glue then streams the buffer back to the host over the
@@ -776,6 +794,7 @@ static void __maybe_unused fetch(char *cmd_parameter, char *response)
 
 	/* Copy + tokenize "part[:off[:size]]". */
 	strlcpy(part_name, cmd_parameter, sizeof(part_name));
+
 	off_str = strchr(part_name, ':');
 	if (off_str) {
 		*off_str++ = '\0';
@@ -785,6 +804,40 @@ static void __maybe_unused fetch(char *cmd_parameter, char *response)
 			size_b = simple_strtoull(sz_str, NULL, 16);
 		}
 		offset_b = simple_strtoull(off_str, NULL, 16);
+	}
+
+	/*
+	 * Board-served virtual targets take precedence over partitions.
+	 * Has to be after tokenizing: the host sends
+	 * "fetch:<name>:<off>:<size>", so matching before the split would
+	 * compare the name against the whole parameter.
+	 */
+	{
+		u32 vlen = 0;
+
+		if (!fastboot_fetch_virtual(part_name, fastboot_buf_addr,
+					    fastboot_buf_size, &vlen)) {
+			if (offset_b >= vlen) {
+				fastboot_fail("Offset past end of data",
+					      response);
+				return;
+			}
+			if (offset_b) {
+				vlen -= (u32)offset_b;
+				memmove(fastboot_buf_addr,
+					(u8 *)fastboot_buf_addr + offset_b,
+					vlen);
+			}
+			if (size_b && size_b < vlen)
+				vlen = (u32)size_b;
+
+			printf("fastboot fetch: virtual '%s' (%u bytes)\n",
+			       part_name, vlen);
+			fastboot_upload_total = vlen;
+			fastboot_upload_sent = 0;
+			fastboot_response("DATA", response, "%08x", vlen);
+			return;
+		}
 	}
 
 	dev_desc = blk_get_devnum_by_uclass_id(UCLASS_MMC, dev_index);

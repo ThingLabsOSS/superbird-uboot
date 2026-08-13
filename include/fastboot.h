@@ -71,6 +71,14 @@ enum fastboot_reboot_reason {
 };
 
 /**
+ * fastboot_fetch_virtual() - serve a `fastboot fetch` target from board
+ * code instead of a partition. Return 0 having filled @buf/@out_len, or
+ * -ENOENT to let the normal partition lookup proceed.
+ */
+int fastboot_fetch_virtual(const char *name, void *buf, u32 bufsz,
+			   u32 *out_len);
+
+/**
  * fastboot_response() - Writes a response of the form "$tag$reason".
  *
  * @tag: The first part of the response
