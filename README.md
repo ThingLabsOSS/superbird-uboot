@@ -65,12 +65,12 @@ no host required after this" recipe:
        --dry-run -o /tmp/boot.bin
    ```
    That assembles info_sector (LBA 0) + stock-BL2[:0x10000] +
-   signed-FIP[0x10000:], padded to 2 MiB (4097 sectors).
+   signed-FIP[0x10000:], padded to 2 MiB (4096 sectors).
 5. **Stage + write to boot0 and boot1** via fastboot:
    ```bash
    sudo fastboot stage /tmp/boot.bin
-   sudo fastboot oem console "mmc dev 0 1; mmc write 0x6000000 0 0x1001"
-   sudo fastboot oem console "mmc dev 0 2; mmc write 0x6000000 0 0x1001"
+   sudo fastboot oem console "mmc dev 0 1; mmc write 0x6000000 0 0x1000"
+   sudo fastboot oem console "mmc dev 0 2; mmc write 0x6000000 0 0x1000"
    sudo fastboot oem console "mmc dev 0 0"
    ```
 6. **Wipe the user area** so BL2's fallback chain (MPT → user-area
