@@ -28,6 +28,7 @@
 #include <video.h>
 #include <video_console.h>
 
+#include "carthing_mmc.h"
 #include "wheel.h"
 #include "charger.h"
 #include "boardrev.h"
@@ -1592,6 +1593,10 @@ static int do_bootmenu(struct cmd_tbl *cmdtp, int flag, int argc,
 			else if (vc)
 				vidconsole_clear_and_reset(vc);
 			printf("\nRunning: %s\n", items[sel].action_cmd);
+			/* Both K_CMD entries (Fastboot, Target Disk Mode) are
+			 * host sessions that move real data, so lift the boot
+			 * speed pin before handing over. */
+			carthing_mmc_fast_for_host();
 			ret = run_command(items[sel].action_cmd, 0);
 			if (ret)
 				printf("\n(command returned %d)\n", ret);

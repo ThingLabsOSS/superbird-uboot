@@ -39,24 +39,3 @@
 	compatible = "amlogic,meson-g12a-ee-pwm";
 };
 
-#ifdef CONFIG_CARTHING_DEBUG_MMC_SLOW
-/*
- * Debug build only: take the eMMC down to plain high-speed SDR.
- *
- * Deleting mmc-ddr-1_8v and mmc-hs200-1_8v strips the caps the core
- * would otherwise negotiate up into, so the surviving mode is MMC HS
- * capped at CONFIG_CARTHING_DEBUG_MMC_MAX_HZ. Bus width is deliberately
- * left at 8 — clock rate and DDR sampling are what marginal hardware
- * fails on first, and changing two variables at once would make the
- * result unreadable.
- *
- * Scope is u-boot alone: stock BL2 has already loaded the FIP by the
- * time this DT exists, and Linux uses its own DT from the boot
- * partition.
- */
-&sd_emmc_c {
-	/delete-property/ mmc-ddr-1_8v;
-	/delete-property/ mmc-hs200-1_8v;
-	max-frequency = <CONFIG_CARTHING_DEBUG_MMC_MAX_HZ>;
-};
-#endif

@@ -31,6 +31,7 @@
 #include <vsprintf.h>
 
 #include "boardrev.h"
+#include "carthing_mmc.h"
 #include "charger.h"
 
 DECLARE_GLOBAL_DATA_PTR;
@@ -146,6 +147,28 @@ int board_init(void)
 		backlight_set_brightness(dev,
 					 IS_ENABLED(CONFIG_CARTHING_DEBUG_CONSOLE) ?
 					 0 : CARTHING_BOOT_GLOW);
+	}
+
+	/* Pin the eMMC slow before anything reads it. The first access is
+	 * the env load at initr_env, which is *earlier* than misc_init_r —
+	 * so this has to happen here, and the block device has to exist,
+	 * which means probing the MMC controller ourselves rather than
+	 * waiting for initr_mmc. Same explicit-dependency-walk trick as the
+	 * backlight above; initr_mmc then finds it already probed.
+	 *
+	 * No re-init: the card hasn't been initialised yet, so the first
+	 * init picks the pin up. Soft-fail — if the probe order ever
+	 * changes under us the unit boots fast rather than not at all, and
+	 * the boot report prints the mode actually negotiated so a silent
+	 * fallback is visible rather than assumed. */
+	if (IS_ENABLED(CONFIG_CARTHING_MMC_SLOW_BOOT)) {
+		struct udevice *mmc_dev;
+
+		if (uclass_get_device(UCLASS_MMC, CARTHING_MMC_DEV, &mmc_dev))
+			printf("eMMC: probe failed; leaving bus speed alone\n");
+		else
+			carthing_mmc_set_mode(CONFIG_CARTHING_MMC_BOOT_MODE,
+					      false);
 	}
 
 	/* Debug build only: the vidconsole in stdout makes console_init_r
@@ -265,6 +288,7 @@ static void carthing_debug_stop(const char *why)
 	printf("Take a photo of this screen. Power-cycle to continue booting\n");
 	printf("(A/B state is already saved — the next boot advances).\n");
 
+	carthing_mmc_fast_for_host();
 	run_command("fastboot 0", 0);
 
 	printf("fastboot exited — halting.\n");
@@ -936,6 +960,9 @@ static void carthing_debug_report(void)
 
 	printf("-- hardware --\n");
 	printf("board rev=%d  serial#=%s\n", rev, envstr("serial#"));
+	/* The negotiated mode, not the requested one — a marginal card or a
+	 * failed pin both show up here rather than being assumed away. */
+	printf("eMMC bus mode=%s\n", carthing_mmc_current_mode());
 
 	printf("-- boot artifacts --\n");
 	carthing_debug_slot_files('a');
@@ -1054,6 +1081,7 @@ static void carthing_boot_route(void)
 		if (IS_ENABLED(CONFIG_CARTHING_DEBUG_CONSOLE)) {
 			printf("Debug build: host can run the real boot path with\n"
 			       "  fastboot oem console \"ab_boot\"\n");
+			carthing_mmc_fast_for_host();
 			run_command("fastboot 0", 0);
 		} else {
 			run_command("fastboot_with_screen", 0);

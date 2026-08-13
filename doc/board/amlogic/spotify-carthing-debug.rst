@@ -165,20 +165,45 @@ re-runnable at any time with ``debugreport`` (also over
 **A halt instead of a reset — in the transient build only.** See "Two
 variants" below.
 
-**A slow eMMC.** ``CARTHING_DEBUG_MMC_SLOW`` (default y) drops the eMMC
-out of DDR52/HS200 to plain high-speed SDR at
-``CARTHING_DEBUG_MMC_MAX_HZ`` (default 26 MHz), by deleting the caps
-from ``sd_emmc_c`` in the u-boot DT overlay. Marginal flash or a bad
-BGA joint can read reliably at 26 MHz and only intermittently at DDR52,
-which surfaces as a ``sysboot`` that can't load the kernel — another
-pre-handoff loop that looks like a broken image. So this doubles as a
-test: **if a unit loops on the normal build and boots on this one, the
-eMMC is the fault, not the software.** Bus width stays at 8 on purpose,
-so only one variable moves.
+**A slow eMMC while booting, full speed for flashing.**
+``CARTHING_MMC_SLOW_BOOT`` (default y) pins the bus to
+``CARTHING_MMC_BOOT_MODE`` (default 1 = ``MMC_HS``, 26 MHz SDR) for the
+boot path, and lifts the pin when a host session starts — fastboot, UMS,
+or either bootmenu entry. Booting slow costs no measurable time;
+flashing slow does, and a host session is exactly where a failure is
+visible and retryable.
 
-Scope is u-boot only. Stock BL2 has already loaded the FIP before this
-DT exists, and Linux uses its own DT from the boot partition, so
-neither runs slower.
+The mechanism is ``mmc->user_speed_mode``, which ``mmc_start_init()``
+honours by masking ``host_caps`` down to the one mode. It needs
+``CONFIG_MMC_SPEED_MODE_SET``, and a mode is only selectable if the DT
+enables it — so the DT keeps its full DDR52/HS200 capabilities and this
+*restricts* at runtime rather than removing. (An earlier version deleted
+the caps from the DT, which worked but made fast unreachable.)
+
+The pin is applied from ``board_init``, because the first eMMC access is
+the env load at ``initr_env``, earlier than ``misc_init_r``. That means
+probing the MMC controller by hand rather than waiting for
+``initr_mmc``. It soft-fails: a probe-order surprise leaves the unit
+booting fast rather than not booting, and the report prints the mode
+actually negotiated so a silent fallback is visible.
+
+Runtime control::
+
+    emmcspeed          show the negotiated mode
+    emmcspeed slow     pin to the boot mode
+    emmcspeed fast     un-pin, renegotiate
+    emmcspeed <n>      pin to enum bus_mode index n
+
+This also doubles as a test for the underlying fault: **if a unit loops
+on the normal build and boots on this one, the eMMC is marginal, not
+the software.** Confirmed in the field on a unit that previously never
+booted. Bus width stays at 8 throughout, so only one variable moves.
+
+Scope is u-boot only. Stock BL2 has already loaded the FIP by then, and
+Linux uses its own DT from the boot partition — where ``&sd_emmc_c`` is
+currently identical to ours, DDR52 and HS200 included. A unit rescued
+here still meets the same flash at full speed once the kernel takes
+over.
 
 Reading the result
 ------------------

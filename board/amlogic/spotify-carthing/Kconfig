@@ -75,36 +75,45 @@ config CARTHING_DEBUG_TRANSIENT
 	  spotify_carthing_debug_defconfig has this y;
 	  spotify_carthing_debug_flash_defconfig has it n.
 
-config CARTHING_DEBUG_MMC_SLOW
-	bool "Run the eMMC at a conservative speed"
+config CARTHING_MMC_SLOW_BOOT
+	bool "Pin the eMMC to a conservative speed for the boot path"
 	depends on CARTHING_DEBUG_CONSOLE
+	select MMC_SPEED_MODE_SET
 	default y
 	help
-	  Drop the eMMC out of DDR52/HS200 and down to a plain high-speed
-	  SDR clock for the duration of u-boot.
+	  Run the eMMC in a slow single-data-rate mode while booting, and
+	  lift the restriction when a host session (fastboot, UMS) starts.
 
-	  A marginal eMMC — aged flash, a cold-solder BGA joint, a board
-	  that only misbehaves warm — can read reliably at 26 MHz SDR and
-	  intermittently at DDR52. That failure lands as a sysboot that
-	  can't load the kernel, which ab_boot counts as a failed attempt
-	  and turns into a pre-handoff bootloop indistinguishable from a
-	  broken image. Running the diagnostic slowly makes the difference
-	  testable: if a unit that loops on the normal build boots on this
-	  one, the eMMC is the problem, not the software.
+	  Field units bootloop because the eMMC is marginal at DDR52 — aged
+	  flash, a cold-solder BGA joint, or a weak USB supply sagging the
+	  rails during init. The giveaway is a partition scan that comes up
+	  empty on cold boot, populates after `mmc rescan`, and then still
+	  fails to boot: a GPT read is two sectors and survives, a 22 MB
+	  kernel load does not. Confirmed in the field — a unit that never
+	  booted came up reliably once the bus was slowed.
 
-	  Only affects u-boot. Stock BL2 loads the FIP before any of this
-	  applies, and Linux gets its own DT from the boot partition, so
-	  neither changes speed.
+	  Booting slow costs no measurable time. Flashing slow does, so the
+	  pin is lifted for fastboot/UMS, where a host is attached and a
+	  failure is visible and retryable. The DT keeps its full DDR52 and
+	  HS200 capabilities — a mode can only be selected at runtime if the
+	  DT enables it — so this restricts rather than removes.
 
-config CARTHING_DEBUG_MMC_MAX_HZ
-	int "eMMC max frequency in the debug build (Hz)"
-	depends on CARTHING_DEBUG_MMC_SLOW
-	default 26000000
+	  `emmcspeed` shows and overrides the mode at runtime.
+
+config CARTHING_MMC_BOOT_MODE
+	int "Bus mode to pin while booting (enum bus_mode index)"
+	default 1
 	help
-	  26 MHz is the MMC high-speed SDR rate and a good first step down
-	  from DDR52. Drop to 400000 to force the initialisation clock —
-	  slow enough to read a genuinely sick device, and slow enough
-	  that loading a kernel takes visible seconds.
+	  Deliberately not "depends on CARTHING_MMC_SLOW_BOOT": cmd_emmcspeed.c
+	  is built into every image so `emmcspeed slow` always works, and the
+	  IS_ENABLED() guards elsewhere still compile both arms. The symbol
+	  therefore has to have a value even when the boot-time pin is off.
+
+	  Index into enum bus_mode in include/mmc.h. 1 = MMC_HS (26 MHz
+	  single-data-rate), the first step down from DDR52 and the one
+	  proven in the field. Others: 3 = MMC_HS_52, 4 = MMC_DDR_52,
+	  10 = MMC_HS_200. 0 = MMC_LEGACY is slower still, for a card that
+	  cannot manage 26 MHz.
 
 endmenu
 
