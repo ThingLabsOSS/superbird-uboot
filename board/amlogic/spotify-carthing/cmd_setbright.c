@@ -1,13 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0+
 /*
- * `setbright` u-boot command — find the panel backlight via the
- * BACKLIGHT uclass and apply a brightness level. Used by the boot menu
- * but also handy from the CLI.
- *
- * Levels accepted:
- *   "low" | "med" | "high"   named presets (~25% / 60% / 100%)
- *   "off"                    backlight off
- *   <0-100>                  raw percentage
+ * `setbright` / `blramp` — panel backlight control, used by the boot menu and
+ * from the CLI. The PWM is INVERTED: 0 = brightest, 100 = dimmest.
+ * See superbird-docs/uboot/splash-and-backlight.md.
  */
 
 #include <command.h>
@@ -38,21 +33,15 @@ static int do_setbright(struct cmd_tbl *cmdtp, int flag, int argc,
 	if (argc < 2)
 		return CMD_RET_USAGE;
 
-	/*
-	 * The Car Thing backlight PWM is wired inverted — the raw value
-	 * passed to backlight_set_brightness() is interpreted as "off
-	 * percentage", so higher raw = dimmer panel. The presets below
-	 * are in user-visible "how bright" terms; the actual values
-	 * passed to the API are correspondingly inverted.
-	 */
+	/* Presets are named in "how bright" terms; the values are inverted. */
 	if (!strcmp(argv[1], "off"))
 		level = BACKLIGHT_OFF;
 	else if (!strcmp(argv[1], "low"))
-		level = 100;	/* visually dim */
+		level = 100;
 	else if (!strcmp(argv[1], "med") || !strcmp(argv[1], "medium"))
-		level = 70;	/* a tad dimmer than midpoint */
+		level = 70;
 	else if (!strcmp(argv[1], "high") || !strcmp(argv[1], "max"))
-		level = 0;	/* fully on (PWM is inverted: 0 = 100% on) */
+		level = 0;
 	else {
 		long v = simple_strtol(argv[1], NULL, 10);
 		if (v < 0 || v > 100) {
@@ -76,13 +65,9 @@ static int do_setbright(struct cmd_tbl *cmdtp, int flag, int argc,
 	else
 		printf("Backlight = %d%%\n", level);
 
-	/* Persist for next boot. argv[1] is what we accepted (off / low /
-	 * med / medium / high / max / a raw number); misc_init_r's
-	 * apply_saved_brightness passes it back through setbright on the
-	 * next boot, so any value setbright accepts survives a round-trip.
-	 * Only env_save when the value actually changes — otherwise the
-	 * re-apply on boot would write the FAT every reset for no reason.
-	 */
+	/* Store the literal argument, which apply_saved_brightness feeds back
+	 * through this same parser next boot. Save only on change — otherwise
+	 * the re-apply would rewrite the FAT on every reset. */
 	{
 		const char *cur = env_get("brightness");
 
@@ -101,14 +86,9 @@ U_BOOT_CMD(
 );
 
 /*
- * `blramp` — ramp the backlight between two levels live, for tuning the
- * boot-splash ease-in (apply_saved_brightness in spotify-carthing.c) without
- * a rebuild. Levels are backlight_set_brightness() percents, inverted like
- * setbright (0 = brightest, 100 = dimmest); the uclass quantizes onto the DT
- * levels so the ramp shows only as many steps as lie between from and to.
- *
- *   blramp <from> <to> [step%] [delay_ms]   (default step 4, delay 12 ms)
- *   e.g. `blramp 100 70` = the boot ramp; `blramp 100 0 2 8` = slower full fade
+ * Replay a backlight ramp live, for tuning the boot-splash ease-in without a
+ * rebuild. The uclass quantizes onto the DT levels, so the ramp shows only as
+ * many steps as lie between from and to.
  */
 static int do_blramp(struct cmd_tbl *cmdtp, int flag, int argc,
 		     char *const argv[])

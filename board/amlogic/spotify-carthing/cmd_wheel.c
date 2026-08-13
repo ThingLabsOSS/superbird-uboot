@@ -1,36 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0+
 /*
- * `wheel` u-boot command — quadrature-decode the Car Thing's rotary
- * encoder (GPIOZ_8 = A, GPIOZ_9 = B) into a signed step count.
+ * Quadrature decoder for the rotary encoder. Board-local because u-boot has
+ * no rotary-encoder uclass upstream.
  *
- * Pin map confirmed on hardware via direct register-level probe; see
- * `knob_decoder.md` in this repo for the silicon-level transition table.
- * Spotify's open-sourced kernel DT references the *1g* hardware revision
- * which uses Z_9 + Z_10; this 512MB revision wires A and B one bit
- * lower (Z_8 + Z_9). The press switch sits at Z_7 on both revs.
+ * GPIOZ_8 = A, GPIOZ_9 = B, confirmed by register-level probe. NOTE this
+ * differs from Spotify's open-sourced kernel DT, which describes the *1g*
+ * revision (Z_9 + Z_10); this 512MB revision wires A/B one bit lower. The
+ * press switch is Z_7 on both.
  *
- * Detent geometry (from the doc):
- *   notch states: (A,B) = (0,0) or (1,1)
- *   mid   states: (A,B) = (1,0) or (0,1)
- *   CW cycle: 00 -> 10 -> 11 -> 01 -> 00  (2 notches per quad period)
- *
- * u-boot has no rotary-encoder uclass upstream so this is a small
- * board-local helper, called by menu scripts that want to track wheel
- * movement between button polls.
- *
- * CLI modes (everything below is single-poll — call repeatedly for live
- * tracking, or use `watch`):
- *   wheel poll     single read; accumulate half-step delta; print
- *                  "<step> <total>" and set $wheel_delta to <total>.
- *   wheel watch    poll at 2 kHz until Ctrl+C, printing each transition.
- *   wheel scope    raw register-level edge count for both channels.
- *   wheel reset    zero the accumulators.
- *   wheel raw      print current (A,B) pin state without decoding.
- *
- * C API for consumers (cmd_bootmenu uses this):
- *   wheel_poll_detents() — read once, return -N..+N net detents since
- *   the last call. Only counts transitions whose target state is a
- *   notch (00 or 11), so 1 physical click = exactly +/-1 here.
+ * Detents are the (0,0) and (1,1) states, so wheel_poll_detents() only counts
+ * transitions landing on one — 1 physical click = exactly +/-1.
+ * Transition table: superbird-docs/uboot/knob_decoder.md.
  */
 
 #include <command.h>

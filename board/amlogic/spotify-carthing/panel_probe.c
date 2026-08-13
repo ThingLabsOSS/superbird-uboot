@@ -1,21 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0+
 /*
- * Probe the LCD panel variant via the TLSC6X touch controller's
- * config-NVM. Ported from Spotify's vendor u-boot
- * (include/spotify/hw_probe.h sp_probe_display_stack).
+ * Identify the LCD panel variant (BOE / Wily / Holitech ST7701S 480x800) from
+ * the TLSC6X touch controller's config NVM, which carries a vendor_id and
+ * chip_code for the touch+panel module the unit was built with.
  *
- * The touch controller at I2C 0x2e on bus i2c0 (GPIOZ_0/Z_1 pinmux)
- * holds a config blob in NVM that includes a vendor_id and chip_code
- * identifying the touch+panel module the carthing was built with.
- * Vendor maps those to BOE / Wily / Holitech variants of the
- * ST7701S-based 480×800 panel.
- *
- * Sequence:
- *   1. Enable DMA: write 6-byte cmd to reg 0x42bd
- *   2. Wait 50 ms, read reg 0x01 to verify DMA enabled
- *   3. Read reg 0x8000 (12 B) to get MCCODE; decide config slot
- *   4. Read 204 B from config slot (0xd6e0 or 0x9e00)
- *   5. Parse vendor_id (bits [15:9]) and chip_code (offset 53/u16)
+ * Ported from vendor u-boot's sp_probe_display_stack
+ * (include/spotify/hw_probe.h). Touch controller is I2C 0x2e on i2c0.
  */
 #include <dm.h>
 #include <dm/uclass.h>

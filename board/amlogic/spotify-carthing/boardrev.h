@@ -3,13 +3,11 @@
 #define __CARTHING_BOARDREV_H
 
 /*
- * Probe the carthing hardware revision via SARADC channel 1.
- * Returns the revision number (1..12) on success, -1 on read error,
- * 0 if the raw reading is outside the recognized range.
+ * Probe the hardware revision via SARADC channel 1. Returns 1..12, -1 on read
+ * error, 0 if the reading is outside the recognized range.
  *
- * Vendor maps an on-board resistor divider to ADC raw values in the
- * 10-bit range; we get 12-bit and divide. See vendor
- * include/spotify/hw_probe.h sp_board_revision_confs[] for the table.
+ * Vendor's table (include/spotify/hw_probe.h, sp_board_revision_confs[]) maps
+ * the resistor divider to 10-bit ADC values; we read 12-bit and divide.
  */
 int carthing_probe_board_rev(void);
 

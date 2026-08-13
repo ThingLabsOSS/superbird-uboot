@@ -1,7 +1,7 @@
 # Upstream u-boot for the Spotify Car Thing
 
-Mainline u-boot ported to the Spotify Car Thing (Amlogic G12A / S905D2,
-512 MiB DDR, 480x800 ST7701S panel, ~5 sec from cold-boot to splash).
+Mainline u-boot ported to the Spotify Car Thing (Amlogic G12A, 512 MiB
+DDR, 480x800 ST7701S panel, ~5 sec from cold-boot to splash).
 The original `u-boot.git` README is preserved as
 [`README.orig`](README.orig).
 
@@ -15,10 +15,12 @@ as `aml-user-key.sig` in their `spsgsb/uboot` repo. The whole user area
 > Sister tooling lives outside this tree:
 > - [`superbird-tool`](https://github.com/ThingLabsOSS/superbird-tool) — pyamlboot wrapper used for
 >   mask-ROM USB chainload, vendor burn-mode, RAM-loading our signed FIP.
-> - [`superbird-fip-tools`](https://github.com/ThingLabsOSS/superbird-fip-tools) — `fip-rebuild.sh`
->   (wraps `aml_encrypt_g12a` to produce the signed FIP),
->   `flash_boot_partition.py` (builds info_sector + hybrid + flashes
->   boot0/boot1), `aml_decrypt.py` (inverse)..
+> - [`superbird-fip-tools`](https://github.com/ThingLabsOSS/superbird-fip-tools) — `fip-tool`, a
+>   single pure-Go binary: `sign` (u-boot.bin → signed FIP), `ramboot`
+>   (RAM-load a FIP via mask-ROM), `flash` (build/write the boot0/boot1
+>   image), `decrypt` (inverse). No vendor toolchain, no
+>   `aml_encrypt_g12a`, no shell. The original Python/shell scripts are
+>   kept under `python/` for reference only.
 
 ## What works
 
@@ -44,28 +46,32 @@ no host required after this" recipe:
 
 1. **Hold buttons 1+4, hit reset** → SoC mask-ROM USB Mode
    (`lsusb` shows `1b8e:c003 GX-CHIP`).
-2. **`superbird-tool --burn_mode <signed-fip>`** — mask-ROM loads stock
-   BL2, BL2 streams our signed FIP body in over USB, our u-boot comes
-   up in DRAM. The signed FIP is
-   `superbird-fip-tools/out/u-boot.bin.spotify.encrypt`, produced from
-   the `u-boot.bin` you just built here:
+2. **Sign the `u-boot.bin` you just built, then RAM-load it.** Signing
+   wraps it as BL33 in a FIP the stock BL2 accepts; `ramboot` streams
+   that FIP into DRAM over the mask-ROM → BL2 → AMLC path, and our
+   u-boot comes up.
    ```bash
    cd ../superbird-fip-tools
-   ./fip-rebuild.sh -b ../superbird-uboot/u-boot.bin
+   ./fip-tool/fip-tool sign ../superbird-uboot/u-boot.bin
+   ./fip-tool/fip-tool ramboot out/u-boot.bin.spotify.encrypt
    ```
+   `sign` embeds TF-A 2.14 as BL31; pass `--bl31 <bl31.bin>` for your
+   own. (`superbird-tool --burn_mode <signed-fip>` does the same
+   RAM-load if you'd rather stay in Python.)
 3. **Auto-fastboot fires** — our u-boot detects it was RAM-loaded
    (boot device = USB) and drops straight into fastboot with the
    `FASTBOOT` on-panel splash. Host enumerates as `18d1:fada`.
 4. **Build the boot-partition image** on the host:
    ```bash
    cd ../superbird-fip-tools
-   ./flash_boot_partition.py ours \
-       --signed-fip out/u-boot.bin.spotify.encrypt \
-       --stock-bootloader bootloader.dump \
-       --dry-run -o /tmp/boot.bin
+   ./fip-tool/fip-tool flash ours --dry-run -o /tmp/boot.bin
    ```
    That assembles info_sector (LBA 0) + stock-BL2[:0x10000] +
-   signed-FIP[0x10000:], padded to 2 MiB (4096 sectors).
+   signed-FIP[0x10000:], padded to 2 MiB (4096 sectors). It defaults to
+   the in-repo `stock.bootloader.bin` and `out/u-boot.bin.spotify.encrypt`;
+   override with `--stock-bootloader` / `--signed-fip`. `--dry-run` stops
+   at building the image — without it, `flash` writes to boot0/boot1
+   itself via vendor burn-mode, which is not the path we use here.
 5. **Write it to boot0 and boot1** via fastboot:
    ```bash
    sudo fastboot flash mmc0boot0 /tmp/boot.bin
@@ -95,8 +101,8 @@ make -j$(nproc) CROSS_COMPILE=aarch64-linux-gnu-
 ```
 
 Produces `u-boot.bin` at the tree root. Hand that to
-`superbird-fip-tools/fip-rebuild.sh -b u-boot.bin` to get a flashable
-signed FIP.
+`superbird-fip-tools/fip-tool/fip-tool sign` to get a flashable signed
+FIP.
 
 ## Layout
 

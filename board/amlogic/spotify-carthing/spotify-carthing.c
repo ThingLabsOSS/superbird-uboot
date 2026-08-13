@@ -33,14 +33,8 @@
 int meson_get_boot_device(void);
 
 /*
- * Per-unit serial number lives in the SoC's eFuse user area at offset 18,
- * 16 bytes of ASCII (NUL-padded). It's the same value adb reports as the
- * device serial and that the stock userland writes into the USB gadget's
- * serialnumber descriptor — see efuse_architecture.md for the layout.
- *
- * Reading goes via the secure-monitor SMC (BL31 owns the fuse controller
- * MMIO). If the SMC fails or the user area is blank, fall back to a
- * generic vendor string so adb/fastboot still come up.
+ * eFuse user-area serials, read via the secure-monitor SMC (BL31 owns the
+ * fuse controller MMIO). Layout: superbird-docs/uboot/efuse_architecture.md.
  */
 #define EFUSE_USID_OFFSET	18
 #define EFUSE_USID_SIZE		16
@@ -48,7 +42,6 @@ int meson_get_boot_device(void);
 #define EFUSE_F_SERIAL_SIZE	15
 #define FALLBACK_SERIAL		"AMLG12ASPOTIFYCARTHING"
 
-/* Trim NUL or non-printable trailing bytes. */
 static void efuse_str_trim(char *s, int n)
 {
 	int i;
@@ -76,8 +69,7 @@ static void set_serial_from_efuse(void)
 		goto fallback;
 	env_set("serial#", usid);
 
-	/* Factory serial — date-coded, follows the usid. Soft-fail if it
-	 * doesn't read cleanly. */
+	/* Factory serial is optional — soft-fail. */
 	len = meson_sm_read_efuse(EFUSE_F_SERIAL_OFFSET, fser,
 				  EFUSE_F_SERIAL_SIZE);
 	if (len == EFUSE_F_SERIAL_SIZE) {
@@ -92,85 +84,48 @@ fallback:
 }
 
 /*
- * Boot-splash smear fix: light a dim glow early, sync the panel onto a black
- * FB, then paint the logo + ramp the backlight once it locks (board_init /
- * misc_init_r / apply_saved_brightness). Backlight % is inverted like
- * cmd_setbright.c (higher = dimmer), and the uclass quantizes onto the DT
- * levels so the ramp is only a few steps. Tune on-device.
+ * Boot glow + splash ramp tuning. Backlight percent is INVERTED (higher =
+ * dimmer). Tune on-device with `blramp`.
+ * Rationale: superbird-docs/uboot/splash-and-backlight.md.
  */
-#define CARTHING_BOOT_GLOW		100	/* dim glow (inverted PWM: higher = dimmer) */
-#define CARTHING_PANEL_SETTLE_MS	80	/* wait for the panel to lock a clean frame */
-#define CARTHING_RAMP_STEP		4	/* brightness % per ramp tick */
-#define CARTHING_RAMP_STEP_MS		12	/* delay between ramp ticks */
+#define CARTHING_BOOT_GLOW		100	/* dim glow */
+#define CARTHING_PANEL_SETTLE_MS	80	/* panel lock time before painting */
+#define CARTHING_RAMP_STEP		4	/* percent per ramp tick */
+#define CARTHING_RAMP_STEP_MS		12
 
 /*
- * Stock firmware fires the backlight on within ~100ms of power-on
- * (before the panel content is initialised) so the user sees the
- * screen visibly lit immediately and "the device is alive". The
- * panel garbage they're illuminating doesn't matter — it gets
- * overwritten the moment the panel init sequence finishes.
- *
- * We mirror the trick from board_init: probe UCLASS_PANEL_BACKLIGHT
- * (which cascades into pwm-meson + the BL_EN gpio + the vddao_3v3
- * regulator — a much narrower dep graph than full video / DSI bringup),
- * then call backlight_enable() + set a dim boot-glow (not the DT
- * default-brightness-level, which is hardware-max on the inverted PWM) so
- * the still-uninitialized panel is only faintly lit. The UCLASS_VIDEO probe
- * (= the ST7701S init sequence) is deferred until a consumer needs the panel
- * (currently: the bootmenu's vidconsole probe). For boots that never
- * enter bootmenu, the panel stays uninit'd but lit by the backlight.
+ * Light the backlight ~100ms into power-on, before the panel is initialised,
+ * so the device reads as alive (mirrors stock). Only the backlight is probed
+ * here; UCLASS_VIDEO is deferred to misc_init_r.
  */
 int board_init(void)
 {
 	struct udevice *dev;
 
-	/* Walk the dependency chain explicitly. board_init runs *before*
-	 * initr_dm_devices, so devices flagged "probe-during-bind" haven't
-	 * been brought up yet — naive uclass_first_device on backlight
-	 * cascade-probes them but only sometimes wins the race against
-	 * deferred-init. Order matters: clock controller -> PWM -> bl. */
+	/* Explicit chain: board_init runs before initr_dm_devices, so a naive
+	 * uclass_first_device on the backlight only sometimes wins the race
+	 * against deferred probe-during-bind init. */
 	uclass_first_device_err(UCLASS_CLK, &dev);
 	uclass_first_device_err(UCLASS_PWM, &dev);
 	if (!uclass_first_device_err(UCLASS_PANEL_BACKLIGHT, &dev)) {
 		backlight_enable(dev);
-		/* Dim glow, not DT-max -- hides the uninit garbage + DSI sync
-		 * transient; ramped up in misc_init_r once the panel locks. */
+		/* Dim, not the DT level — that is hardware-max on this PWM. */
 		backlight_set_brightness(dev, CARTHING_BOOT_GLOW);
 	}
 	return 0;
 }
 
-/*
- * Vendor u-boot's check_charger macro periodically writes 0x8F to
- * MAX14656 register 0x09 (CONTROL 3, sets CHG_TYP_MAN=1) while
- * waiting for a "good" source. We do an opportunistic one-shot
- * redetect at boot: read the chip's status first, and only retrigger
- * if the chip's still mid-detection (CHG_DET_RUN_S, bit 6) or if it
- * reports "nothing attached" (CHG_TYP_S = 0). Helps catch
- * mis-classification on slow-rising VBUS. Returns silently if the
- * chip isn't responding.
- */
+/* Settled = not mid-detection (CHG_DET_RUN_S) and something is attached. */
 static int charger_status_settled(uint8_t status)
 {
 	return ((status >> 6) & 1) == 0 && (status & 0xf) != 0;
 }
 
 /*
- * Map the MAX14656 CHG_TYP_S nibble to a safe peak CPU frequency for
- * the kernel to cap scaling_max_freq at. The kernel's extlinux.conf
- * references ${charger_cap_khz} on the APPEND line, so u-boot's
- * syslinux parser substitutes whatever we set here into the cmdline
- * (kernel side: superbird-cpufreq-cap systemd oneshot reads
- * superbird.max_cpufreq_khz=N and clamps cpufreq accordingly).
- *
- * Bands come from the upstream G12A OPP table:
- *   1512000 kHz @ ~791 mV — safe on a USB-SDP-500 port (~2.5 W budget)
- *   1704000 kHz @ ~861 mV — today's previously-pinned peak, fine on CDP
- *   1800000 kHz @  981 mV — full peak, only on a real DCP / high-current
- *
- * Default is the conservative SDP cap: if we can't classify or the
- * chip isn't talking, treat it as worst-case and let the kernel
- * unclamp later if userspace knows better.
+ * CHG_TYP_S -> peak CPU kHz the kernel should cap scaling_max_freq at,
+ * published as ${charger_cap_khz} for extlinux to substitute. Bands and
+ * kernel-side wiring: superbird-misc-notes/i2c/README.md.
+ * Unknown/unreadable falls through to the conservative SDP cap.
  */
 static const char *charger_cpufreq_cap_khz(uint8_t status)
 {
@@ -197,9 +152,7 @@ static void log_charger_state(void)
 
 	if (carthing_charger_read(&info) || !info.valid) {
 		printf("Charger: I2C read failed (probably no chip on this rev)\n");
-		/* Conservative cap even when we can't read the chip — kernel
-		 * would default to 1.5 GHz on an empty value anyway, but
-		 * setting it explicitly keeps /proc/cmdline self-describing. */
+		/* Set explicitly, not left empty, so /proc/cmdline self-describes. */
 		env_set("charger_cap_khz", "1512000");
 		return;
 	}
@@ -219,11 +172,7 @@ static void log_charger_state(void)
 	printf("Charger: CPU freq cap = %s kHz\n", cap_khz);
 }
 
-/*
- * Resolve a setbright-style level string to a backlight_set_brightness()
- * percent. The Car Thing PWM is inverted: 0 = brightest, 100 = dimmest
- * (mirrors cmd_setbright.c).
- */
+/* setbright-style level string -> inverted percent (0 = brightest). */
 static int brightness_to_percent(const char *v)
 {
 	if (!strcmp(v, "off"))
@@ -246,9 +195,8 @@ static int brightness_to_percent(const char *v)
 }
 
 /*
- * Apply the saved brightness (bootmenu/`setbright`, default "med"), easing up
- * from the dim boot-glow rather than snapping. Called after the splash paints,
- * so the ramp lands on the clean logo.
+ * Ease from the boot glow up to the saved brightness. Called after the splash
+ * paints so the ramp lands on a clean logo.
  */
 static void apply_saved_brightness(void)
 {
@@ -256,15 +204,13 @@ static void apply_saved_brightness(void)
 	struct udevice *bl;
 	int target, cur, step;
 
-	/* No saved value -> "med": DT default-brightness-level=0 is hardware-max
-	 * on the inverted PWM, too bright for a fresh boot. */
+	/* "med", not the DT level — that is hardware-max on this PWM. */
 	if (!v || !*v)
 		v = "med";
 	target = brightness_to_percent(v);
 
 	if (uclass_first_device_err(UCLASS_PANEL_BACKLIGHT, &bl)) {
-		/* Backlight lookup failed — fall back to the command path so
-		 * the saved level is still honoured (just without the ramp). */
+		/* Honour the saved level via the cmd path, just without a ramp. */
 		char cmd[24];
 
 		snprintf(cmd, sizeof(cmd), "setbright %s", v);
@@ -277,9 +223,7 @@ static void apply_saved_brightness(void)
 		return;
 	}
 
-	/* Ease from the dim boot-glow up to the target rather than snapping.
-	 * The PWM is inverted (higher value = dimmer), so brightening means
-	 * stepping the value DOWN toward the target. */
+	/* Inverted PWM: brightening steps the value DOWN. */
 	cur = CARTHING_BOOT_GLOW;
 	step = (target < cur) ? -CARTHING_RAMP_STEP : CARTHING_RAMP_STEP;
 	while (cur != target) {
@@ -297,26 +241,12 @@ static void detect_maskrom_failed(int boot_device);
 static void carthing_boot_route(void);
 
 /*
- * The G12A mask ROM records the boot source in AO_SEC_GP_CFG0 bits [3:0].
- * meson_get_boot_device() (arch/arm/mach-meson/board-g12a.c) decodes that
- * into BOOT_DEVICE_EMMC (1) / SD (4) / USB (5). When we RAM-load this u-boot
- * via superbird-tool's `--burn_mode CUSTOM_FIP`, BL2 sees the mask-ROM USB
- * boot source — so any time we read BOOT_DEVICE_USB here, we know we're
- * iterating from RAM rather than executing the production boot path.
+ * Publish the mask-ROM boot source as `boot_source` (usb/sd/emmc/other).
+ * USB means we were RAM-loaded, so carthing_boot_route sends it to fastboot.
  *
- * Stash the result in env var `boot_source` (usb/sd/emmc/other). The
- * `boot_check` env macro reads this and routes USB boots straight into
- * fastboot_with_screen (so dev iterations via `--burn_mode` drop the
- * host into a fastboot session without any panel-side navigation).
- *
- * We deliberately do NOT env_set("bootcmd", ...) here. That used to be
- * the mechanism — but any env_save() that fires later in this boot
- * (e.g. apply_saved_brightness defaulting on a fresh-terraform FAT,
- * or setbright/bootmenu Settings) would persist the transient bootcmd
- * override to uboot.env, and subsequent eMMC-side power-on boots would
- * silently auto-fastboot instead of honouring the menu-button-hold
- * path. Keeping the decision in `boot_check` means transient env state
- * stays transient — boot_source is re-derived at every boot.
+ * Deliberately NOT env_set("bootcmd") — a later env_save would persist that
+ * transient override and every subsequent eMMC boot would auto-fastboot.
+ * See superbird-docs/uboot/boot-flow.md.
  */
 static void set_boot_source(void)
 {
@@ -338,35 +268,10 @@ static void set_boot_source(void)
 }
 
 /*
- * Detect a failed mask-ROM USB boot attempt by reading the "POC" field
- * (Power-On Configuration / boot intent) that mask-ROM latches into
- * AO_SEC_GP_CFG0[7:4] at strapping time. The value persists across
- * mask-ROM's internal fallback chain (USB-timeout → eMMC) because the
- * fallback is an internal state-machine reset, not a power cycle, so
- * the AO domain stays alive throughout. Confirmed empirically:
- *
- *   POC = 0xD  ↔  buttons 1+4 held at strapping  ↔  USB boot intent
- *   POC = 0xF  ↔  no/wrong buttons               ↔  normal eMMC intent
- *
- * Layout of CFG0 low-byte (verified by reading both BL2's UART banner
- * and the register after our u-boot starts):
- *
- *   bits  layout    e.g. 0x020004d1  e.g. 0x020004f1
- *   [3:0] boot dev  1 = EMMC          1 = EMMC
- *   [7:4] POC       0xD = USB intent  0xF = eMMC intent
- *
- * So "user wanted mask-ROM USB but didn't get it" =
- *   (POC == 0xD) && (boot_source == EMMC)
- *
- * This is button-state-independent: even if the user releases the
- * buttons during the ~10 seconds between reset and our u-boot reading
- * AO, the latched POC value tells us their original intent.
- *
- * The detection runs once at misc_init_r time and sets env var
- * "maskrom_failed=1" if it fires. The `boot_check` env macro reads it
- * and routes into the bootmenu so the help screen can render — kept
- * out of C-side env_set("bootcmd", ...) so a later env_save can't
- * persist a transient bootmenu override into uboot.env.
+ * "User held buttons 1+4 for mask-ROM but the SoC fell back to eMMC."
+ * The POC nibble latched at strapping records the intent and survives the
+ * fallback, so this works even if the buttons were released since.
+ * Nibble values + register layout: superbird-docs/uboot/boot-flow.md.
  */
 #define AO_SEC_GP_CFG0	0xff800240UL
 #define POC_SHIFT	4
@@ -394,42 +299,21 @@ static void detect_maskrom_failed(int boot_device)
 }
 
 /*
- * Custom boot logo from the OS partitions.
- *
- * By default u-boot's video uclass auto-paints a baked-in splash (the
- * BMP linked in as __splash_u_boot_logo_begin) during the UCLASS_VIDEO
- * probe. We override that: if an OS slot ships its own /logo.bmp in its
- * boot_<slot> filesystem, paint that instead — so a slot can carry its
- * own branding without reflashing u-boot. Falls back to the baked-in
- * logo when neither slot has a valid one.
- *
- * Slot order: the active slot (slot_active, default 'a' — same rule as
- * do_ab_boot) is tried first, then the other slot. First valid BMP wins.
- * This runs from the misc_init_r video probe, BEFORE ab_boot picks a
- * slot, but slot_active is just an env var so we resolve it ourselves.
- * Cost is one eMMC + FS read (~tens of ms for a few-hundred-KB BMP).
- *
- * 16/24/32bpp BMP support is enabled in the defconfig so a normal
- * full-colour BMP works; without those the uclass only renders 8bpp
- * palette images and a colour logo would be rejected by
- * video_bmp_display(). Skipped entirely under quick_boot=1 (the panel
- * isn't probed on that path).
+ * Per-slot boot logo: an OS slot shipping /logo.bmp in its boot_<slot>
+ * filesystem gets painted instead of the baked-in splash, so a slot can
+ * rebrand without reflashing u-boot.
+ * Requires 16/24/32bpp BMP support in the defconfig — without it the uclass
+ * rejects colour BMPs. Details: superbird-docs/uboot/splash-and-backlight.md.
  */
 #define CARTHING_LOGO_PATH	"/logo.bmp"
-/*
- * Scratch load address for the BMP. The kernel_addr_r region is free at
- * misc_init_r time (no kernel loaded yet) and video_bmp_display() copies
- * the pixels straight into the framebuffer, so this buffer is transient.
- */
+/* kernel_addr_r's region — free here, and the BMP is consumed immediately. */
 #define CARTHING_LOGO_LOADADDR	0x08080000UL
-/* Cap the read so a bogus oversized logo.bmp can't run off into DRAM.
- * A full-panel 800x480 32bpp BMP is ~1.5 MB; 4 MB is comfortable slack. */
+/* Bounds a bogus BMP; a full-panel 800x480 32bpp image is ~1.5 MB. */
 #define CARTHING_LOGO_MAX	(4 * 1024 * 1024)
 
 /*
- * Paint a BMP at `data`, mirroring video-uclass.c show_splash(): a
- * full-panel image is drawn corner-aligned at (0,0); anything smaller
- * keeps the default top-left logo placement. Returns 0 if painted.
+ * Paint a BMP, mirroring video-uclass.c show_splash() placement: full-panel
+ * images corner-align at (0,0), smaller ones keep the top-left logo offset.
  */
 static int carthing_paint_bmp(struct udevice *dev, u8 *data)
 {
@@ -452,11 +336,7 @@ static int carthing_paint_bmp(struct udevice *dev, u8 *data)
 	return video_bmp_display(dev, map_to_sysmem(data), x, y, align);
 }
 
-/*
- * Load CARTHING_LOGO_PATH from boot_<slot>'s filesystem into `buf`.
- * Returns the byte count on success, <=0 if the partition, filesystem
- * or file is absent.
- */
+/* Returns bytes read, or <=0 if the partition, filesystem or file is absent. */
 static int carthing_load_slot_logo(char slot, u8 *buf)
 {
 	struct blk_desc *desc;
@@ -487,11 +367,9 @@ static int carthing_load_slot_logo(char slot, u8 *buf)
 }
 
 /*
- * Resolve the active OS slot from the slot_active env var: 'b' only for
- * an exact "b", otherwise 'a' (covers unset, garbage, or "a"). Single
- * source of truth shared by the splash painter, the unbypassable slot
- * publish in misc_init_r, and the A/B selector — so they can never
- * disagree about which slot is current.
+ * 'b' only for an exact "b", else 'a' (unset, garbage, or "a"). Shared by the
+ * splash painter, the misc_init_r slot publish and ab_boot so the three can
+ * never disagree.
  */
 static char resolve_slot(void)
 {
@@ -500,10 +378,7 @@ static char resolve_slot(void)
 	return (active && active[0] == 'b' && active[1] == '\0') ? 'b' : 'a';
 }
 
-/*
- * Paint the boot splash: prefer a partition-supplied /logo.bmp (active
- * slot first, then the other), else the baked-in logo.
- */
+/* Active slot's /logo.bmp first, then the other, else the baked-in logo. */
 static void carthing_show_splash(struct udevice *dev)
 {
 	char slot = resolve_slot();
@@ -521,37 +396,17 @@ static void carthing_show_splash(struct udevice *dev)
 		}
 	}
 
-	/* No usable partition logo — paint the baked-in one. */
 	carthing_paint_bmp(dev, video_get_u_boot_logo());
 }
 
 /*
- * Guarantee env vars that booting depends on but that a saved
- * CONFIG_ENV_IS_IN_FAT uboot.env replaces wholesale (a saved env
- * overrides the compiled-in environment rather than merging with
- * CFG_EXTRA_ENV_SETTINGS). A stale, sparse, or foreign saved env can
- * therefore arrive missing these — so we re-establish them here, on the
- * unbypassable misc_init_r path, the same way set_boot_source() and
- * set_serial_from_efuse() force their own state regardless of the env.
+ * Re-establish env vars that booting depends on. A saved ENV_IS_IN_FAT
+ * uboot.env REPLACES the compiled-in env rather than merging with it, so a
+ * stale or foreign env can arrive missing these entirely.
  *
- * Set-if-absent only: a correct saved env or an explicit user override
- * still wins, and the A/B selector (do_ab_boot) stays free to rewrite
- * `slot` per failover when it actually runs.
- *
- *  - kernel_comp_addr_r / kernel_comp_size: the decompression buffer for
- *    a gzipped kernel (extlinux `KERNEL Image.gz`). Defined nowhere in
- *    our compiled env — spotify-carthing.h's CFG_EXTRA_ENV_SETTINGS
- *    override drops the meson64.h defaults — so a foreign env lacking
- *    them dies with "kernel_comp_addr_r or kernel_comp_size is not
- *    provided!". Values match the known-good wic env; the 0x0a000000..
- *    0x0e000000 buffer sits between kernel_addr_r (0x08080000, holding
- *    the compressed Image.gz) and ramdisk_addr_r (0x13000000) on the
- *    512 MiB part — no collision.
- *  - slot: extlinux.conf substitutes ${slot} into
- *    root=PARTLABEL=root_${slot}. do_ab_boot publishes it on the normal
- *    path, but a foreign bootcmd that never runs ab_boot would otherwise
- *    leave ${slot} empty (root=PARTLABEL=root_). Publish the resolved
- *    slot up front so it's never empty regardless of which bootcmd fires.
+ * Set-if-absent, so a correct saved env or a user override still wins, and
+ * ab_boot stays free to rewrite `slot` per failover.
+ * Why these two specifically: superbird-docs/uboot/boot-flow.md.
  */
 static void carthing_guarantee_env(void)
 {
@@ -570,21 +425,11 @@ static void carthing_guarantee_env(void)
 }
 
 /*
- * Report the eMMC bus mode, and shout if it isn't the one we expect.
- *
- * Asking for a mode and getting it are different things: if a mode is
- * advertised but the switch fails, u-boot's mmc core quietly falls back
- * to a slower one and reports success. That is not hypothetical — a
- * Kioxia 004GA0 unit negotiates legacy when offered DDR52, and the only
- * symptom is that everything is mysteriously slow, or on a marginal
- * part, that kernel-sized reads fail while small ones don't.
- *
- * With DDR52 removed from the DT the expected mode is HS52. Anything
- * below that means the bus is degraded and this board is a candidate
- * for the pre-handoff bootloop, so say so on the console and publish
- * `emmc_mode` in the environment — that makes it readable without a
- * UART, via `fastboot oem console "printenv emmc_mode"`, the bootmenu,
- * or fw_printenv from Linux.
+ * Asking for a bus mode and getting it are different things: on a failed
+ * switch the mmc core silently drops to a slower mode and reports success.
+ * A degraded bus is a candidate for the pre-handoff bootloop, so make it
+ * loud, and publish `emmc_mode` so it is readable without a UART.
+ * Per-part measurements: the DT overlay + superbird-misc-notes/perf-bench.
  */
 static void carthing_report_mmc_mode(void)
 {
@@ -617,34 +462,20 @@ int misc_init_r(void)
 	carthing_report_mmc_mode();
 	log_charger_state();
 	carthing_guarantee_env();
-	/* g_dnl's default product string is "USB download gadget"; replace
-	 * with the project name. Manufacturer is set at compile time via
-	 * CONFIG_USB_GADGET_MANUFACTURER. */
 	g_dnl_set_product("Superbird");
-	/* Start capturing console output so `fastboot oem console "<cmd>"`
-	 * can return the cmd's output to the host. Kconfig allocates the
-	 * 128 KiB ring buffer; this enables actual recording. */
+	/* Enables recording into the Kconfig-allocated ring buffer, so
+	 * `fastboot oem console "<cmd>"` can return output to the host. */
 	console_record_reset_enable();
-	/* Probe UCLASS_VIDEO so the panel is fully initialized + the splash
-	 * paints + vidconsole is ready before autoboot. Costs ~700 ms (the
-	 * ST7701S DSI init sequence) on the reset→autoboot path. On by
-	 * default so an average user sees a normal boot.
-	 *
-	 * Set env `quick_boot=1` to skip — the bootmenu's own UCLASS_VIDEO
-	 * probe still cascade-inits the panel on demand when the menu
-	 * enters. But the OS that follows u-boot will inherit an
-	 * uninitialized panel: fine if the OS does its own DRM init
-	 * (mainline Linux), broken if the OS just adopts u-boot's state
-	 * (e.g. the stock Spotify rootfs takes the framebuffer as-is).
-	 *
-	 * Backlight is kicked on early in board_init() regardless, so the
-	 * device always looks "alive" within ~100 ms of power-on. */
+	/*
+	 * Probing video here costs ~700 ms (the ST7701S DSI init) but leaves the
+	 * panel initialised for whatever boots next. quick_boot=1 skips it —
+	 * safe only if the OS does its own DRM init. See boot-flow.md.
+	 */
 	if (env_get_yesno("quick_boot") != 1) {
 		struct udevice *dev;
 
-		/* Set hide_logo before probing so video_post_probe() skips its
-		 * auto-splash and the panel syncs onto the cleared (black) FB --
-		 * nothing on screen for the sync transient to smear. */
+		/* hide_logo BEFORE probing: the panel then syncs onto a cleared
+		 * FB, so the sync transient has nothing to smear. */
 		if (!uclass_find_first_device(UCLASS_VIDEO, &dev) && dev) {
 			struct video_uc_plat *plat = dev_get_uclass_plat(dev);
 
@@ -652,51 +483,30 @@ int misc_init_r(void)
 		}
 
 		if (!uclass_first_device_err(UCLASS_VIDEO, &dev)) {
-			/* Let the panel lock a clean (black) frame, then paint the
-			 * logo (slot /logo.bmp, else baked-in). */
 			mdelay(CARTHING_PANEL_SETTLE_MS);
 			carthing_show_splash(dev);
 		}
 	}
-	/* Ramp from the dim boot-glow up to med/saved, now on a clean logo. */
 	apply_saved_brightness();
-	/* Run the boot router BEFORE autoboot fires bootcmd. This is the
-	 * "menu-button-hold always works" guarantee — no matter what
-	 * bootcmd is set to (saved env, flashed image, user override),
-	 * holding the menu button at boot opens the bootmenu. Same goes
-	 * for the boot_source=usb / maskrom_failed / reboot_reason
-	 * routing. See carthing_boot_route() for the full priority list. */
+	/* Must run BEFORE autoboot fires bootcmd — that ordering is what makes
+	 * menu-button-hold work regardless of what bootcmd is set to. */
 	carthing_boot_route();
 	return 0;
 }
 
 /*
- * Reboot-reason stash — PREG_STICKY_REG3 (0xff6345cc, PERIPHS block).
- *
- * `fastboot reboot bootloader` needs the reason to survive the reset so the
- * next boot lands back in fastboot. The Amlogic convention is AO_SEC_SD_CFG15
- * (0xff80023c), but that register is owned by the SCP and ANY CPU write to it
- * hard-hangs the bus — confirmed on hardware at EL2 and EL3, both from a live
- * SMC and from the BL31 reset path. Setting it the vendor way needs an
- * undocumented SCPI command baked into the closed SCP core.
- *
- * So we use a PREG_STICKY scratch register instead. Verified on hardware:
- * (a) freely CPU-writable — no SCP, no SMC, no hang; and (b) survives the
- * SCPI reboot intact (a cold power cycle clears it, which is correct: cold
- * boot => normal). Tagged with a magic so stale/garbage isn't taken for a
- * real reason, and one-shot cleared on read. Being a plain non-secure
- * register, Linux can write it too for a real `reboot bootloader`.
+ * Reboot-reason stash. NOT the Amlogic-convention AO_SEC_SD_CFG15 — that is
+ * SCP-owned and ANY CPU write to it hard-hangs the bus (confirmed at EL2 and
+ * EL3). PREG_STICKY_REG3 is freely CPU-writable, survives the SCPI reboot,
+ * and clears on a cold power cycle. Magic-tagged and one-shot so garbage is
+ * never read as a reason. See superbird-docs/uboot/reboot-bootloader.md.
  */
 #define CARTHING_RR_STICKY	0xff6345ccUL	/* PREG_STICKY_REG3 */
 #define CARTHING_RR_MAGIC	0x5242a100U	/* "RB" tag, bits 31:8 */
 #define CARTHING_RR_MAGIC_MASK	0xffffff00U
 
-/*
- * Carthing-local reboot reason (outside the Amlogic 0..13 enum). Unlike the
- * others, this one is consumed by *BL31* at reset time — its g12a_system_reset
- * sees the reason, asks the SCP for USB_BOOT, and the software reset then lands
- * in mask-ROM USB mode (1b8e:c003). u-boot never routes on it.
- */
+/* Carthing-local, outside the Amlogic 0..13 enum. Consumed by BL31 at reset,
+ * not by carthing_boot_route. */
 #define REBOOT_REASON_MASKROM	0x4d		/* 'M' */
 
 static void carthing_set_reboot_reason(unsigned int reason)
@@ -704,10 +514,7 @@ static void carthing_set_reboot_reason(unsigned int reason)
 	writel(CARTHING_RR_MAGIC | (reason & 0xffU), CARTHING_RR_STICKY);
 }
 
-/*
- * Consume the stashed reason: returns 0..255, or -1 if none/invalid.
- * One-shot — clears the register so the reason fires exactly once.
- */
+/* Returns 0..255, or -1 if none/invalid. Clears, so the reason fires once. */
 static int carthing_take_reboot_reason(void)
 {
 	u32 v = readl(CARTHING_RR_STICKY);
@@ -719,10 +526,8 @@ static int carthing_take_reboot_reason(void)
 }
 
 /*
- * Override the upstream default fastboot_set_reboot_flag (which writes
- * Android "bootonce-bootloader" strings into a misc partition we don't have).
- * Stash the reason in PREG_STICKY_REG3; carthing_boot_route reads it on the
- * next boot and routes BOOTLOADER/FASTBOOT into fastboot.
+ * Overrides the upstream default, which writes Android "bootonce-bootloader"
+ * strings into a misc partition we don't have.
  */
 int fastboot_set_reboot_flag(enum fastboot_reboot_reason reason)
 {
@@ -739,8 +544,6 @@ int fastboot_set_reboot_flag(enum fastboot_reboot_reason reason)
 		aml_reason = REBOOT_REASON_RECOVERY;
 		break;
 	case FASTBOOT_REBOOT_REASON_MASKROM:
-		/* `fastboot oem maskrom` — consumed by BL31 at the PSCI reset
-		 * (SCP USB_BOOT), not by carthing_boot_route on next boot. */
 		aml_reason = REBOOT_REASON_MASKROM;
 		break;
 	default:
@@ -751,37 +554,12 @@ int fastboot_set_reboot_flag(enum fastboot_reboot_reason reason)
 }
 
 /*
- * Boot routing — runs unconditionally from misc_init_r (and also
- * exposed as the `boot_check` u-boot command for CLI/scripts). The
- * misc_init_r call happens *before* autoboot fires bootcmd, so the
- * routing can't be bypassed by an env override on `bootcmd`.
+ * Decides whether to intercept the boot before autoboot fires bootcmd, so an
+ * env override can't bypass it. Priority order is the sequence below; the
+ * reasoning behind it is in superbird-docs/uboot/boot-flow.md.
  *
- * Priority order:
- *  1. boot_source=usb (set by set_boot_source — we were RAM-loaded via
- *     mask-ROM USB / `--burn_mode CUSTOM_FIP`). Auto-enter fastboot
- *     with the on-panel splash so dev iterations drop the host into a
- *     fastboot session.
- *  2. maskrom_failed=1 (set by detect_maskrom_failed — POC intent was
- *     USB but the SoC fell back to eMMC). Open the bootmenu so it can
- *     render the help screen.
- *  3. Reboot reason is "bootloader" or "fastboot" (set by our
- *     fastboot_set_reboot_flag for `fastboot reboot bootloader` /
- *     `fastboot reboot fastboot`, stashed in PREG_STICKY_REG3 which
- *     survives the reset; see carthing_set_reboot_reason). Consumed
- *     one-shot here. Auto-enter fastboot.
- *  4. Reboot reason is "recovery" — drop to bootmenu (until we have an
- *     actual recovery flow).
- *  5. User is holding the menu button — drop to bootmenu. This is the
- *     "always works no matter what bootcmd is" entry point.
- *  6. Otherwise: return cleanly. autoboot fires whatever bootcmd is
- *     set to (extlinux, etc.).
- *
- * Idempotent within a single boot via the static `route_done` flag —
- * any second invocation (e.g. from a `bootcmd=boot_check` calling the
- * U_BOOT_CMD wrapper) no-ops. Required because the conditions above
- * (especially maskrom_failed, reboot_reason) don't self-clear within
- * one boot, so re-running would loop the user back into bootmenu /
- * fastboot every time.
+ * Idempotent: none of these conditions self-clear within a boot, so a second
+ * invocation (e.g. bootcmd=boot_check) would otherwise loop forever.
  */
 static bool boot_route_done;
 
@@ -845,18 +623,6 @@ U_BOOT_CMD(
 	"  the CLI can trigger it explicitly if needed."
 );
 
-/*
- * `maskrom` — reboot into mask-ROM USB download mode (1b8e:c003), no buttons.
- *
- * Stashes the MASKROM reboot reason and resets. The reset is a PSCI software
- * reset, so BL31's g12a_system_reset() runs with the SCP still powered: it
- * sees the reason and issues a SCPI USB_BOOT to the SCP, which re-arms the
- * bootROM's USB-first window. Net effect: the device comes back up in mask-ROM
- * USB mode instead of booting. Recovery is any hardware reset-pin reset (it
- * resets the SCP, clearing the request) or a cold power cycle.
- *
- * Reachable from the host via `fastboot oem console "maskrom"`.
- */
 static int do_maskrom(struct cmd_tbl *cmdtp, int flag, int argc,
 		      char *const argv[])
 {
@@ -877,48 +643,16 @@ U_BOOT_CMD(
 );
 
 /*
- * A/B slot selection + rollback state machine (Task 4).
+ * A/B slot selection + rollback. Runs as the normal-boot bootcmd, after
+ * boot_check declines to intercept. State (slot_active, slot_<x>_tries) lives
+ * in uboot.env, shared with Linux via libubootenv; superbird-slot-ok on the
+ * Linux side restores the counter after a healthy boot.
  *
- * Runs as the normal-boot bootcmd — i.e. *after* boot_check
- * (carthing_boot_route in misc_init_r) has declined to intercept for
- * fastboot / bootmenu / recovery. Picks an OS slot, burns one try
- * against it, persists that to uboot.env, then hands off to the extlinux
- * sysboot. The decision lives in the binary (not an env macro) for the
- * same reason boot_check does: a saved uboot.env that didn't carry the
- * macro forward can't break booting (see commit 7578f41b06).
+ * In the binary rather than an env macro so a saved uboot.env that didn't
+ * carry the macro forward can't break booting (commit 7578f41b06).
  *
- * State (all in uboot.env, shared with Linux via libubootenv):
- *   slot_active   which slot is current ("a"/"b"). Linux flips it on OTA.
- *   slot_a_tries  attempts remaining for slot a.
- *   slot_b_tries  attempts remaining for slot b.
- *   slot          (output) the slot picked this boot; extlinux.conf
- *                 substitutes ${slot} into root=PARTLABEL=root_${slot}
- *                 and superbird.slot=${slot}.
- *
- * Per boot:
- *   1. slot  := slot_active           (default "a" if unset/garbage)
- *      tries := slot_<slot>_tries      (default 3 if unset)
- *   2. tries <= 0 → active slot exhausted: flip slot_active to the other
- *      slot, give it a fresh budget of 3, saveenv, reset. The selector
- *      re-runs next boot against the new active slot.
- *   3. tries > 0  → burn one attempt up front (tries-1) and saveenv
- *      *before* booting, so a kernel that hangs before the Linux
- *      slot-OK service runs still counts against this slot. Publish
- *      `slot`, resolve the boot partition, sysboot.
- *   4. sysboot only returns if the boot FAILED. Treat the return as a
- *      failed attempt and reset; the selector re-runs with a lower try
- *      count and eventually flips.
- *
- * The Linux side closes the loop: superbird-slot-ok resets
- * slot_<booted>_tries to 3 after ~60 s of stable uptime, so a slot only
- * counts down when a boot doesn't stay healthy.
- *
- * Both-slots-broken degrades to an a<->b oscillation (each flip resets
- * the target to 3) rather than a hard hang — an acceptable soft-brick
- * for v1 that keeps retrying. A bounded variant could count flips in a
- * slot_flip_count env var and drop to fastboot after N cycles, but that
- * needs the Linux slot-OK service to also zero slot_flip_count on a
- * healthy boot, so it's left out until that's wired on the yocto side.
+ * Full state machine + the both-slots-broken behaviour:
+ * superbird-docs/uboot/boot-flow.md.
  */
 #define AB_DEFAULT_TRIES	3
 
@@ -930,23 +664,14 @@ static int do_ab_boot(struct cmd_tbl *cmdtp, int flag, int argc,
 	long tries;
 	char cmd[160];
 
-	/* 1. Pick the active slot via resolve_slot() (shared with the splash
-	 *    painter and misc_init_r's slot publish): 'b' only for an exact
-	 *    "b", else 'a' — so an unset or garbage slot_active can't fail
-	 *    into an empty boot_ label. */
 	slot = resolve_slot();
 	other = (slot == 'a') ? 'b' : 'a';
 
-	/* 2. Read this slot's remaining tries. env_get_ulong returns the
-	 *    default for an unset var, so a missing counter falls back to a
-	 *    full budget rather than instantly failing over. */
+	/* An unset counter falls back to a full budget, not an instant failover. */
 	snprintf(tries_var, sizeof(tries_var), "slot_%c_tries", slot);
 	tries = (long)env_get_ulong(tries_var, 10, AB_DEFAULT_TRIES);
 
 	if (tries <= 0) {
-		/* Active slot exhausted — fail over: make the other slot
-		 * active with a fresh budget, then reboot so the selector
-		 * re-runs against it. */
 		printf("AB: slot %c exhausted, failing over to slot %c\n",
 		       slot, other);
 		slot_str[0] = other;
@@ -960,8 +685,8 @@ static int do_ab_boot(struct cmd_tbl *cmdtp, int flag, int argc,
 		return 0;	/* not reached */
 	}
 
-	/* 3. Burn one attempt and persist it BEFORE booting, so a hang or
-	 *    crash before the Linux slot-OK service still counts down. */
+	/* Persist BEFORE booting: a hang before the Linux slot-OK service must
+	 * still count down, or a wedged slot retries forever. */
 	printf("AB: booting slot %c (%ld tries left after this attempt)\n",
 	       slot, tries - 1);
 	env_set_ulong(tries_var, tries - 1);
@@ -969,11 +694,8 @@ static int do_ab_boot(struct cmd_tbl *cmdtp, int flag, int argc,
 		printf("AB: WARNING: saveenv failed; try counter may not "
 		       "persist across a hang\n");
 
-	/* 4. Publish the chosen slot so extlinux.conf substitutes
-	 *    root_${slot} / superbird.slot=${slot}, then hand off. The
-	 *    ${boot_partnum}/${scriptaddr} refs are expanded by the parser
-	 *    at run time — boot_partnum is set by `part number`, scriptaddr
-	 *    comes from uboot.env. */
+	/* extlinux.conf substitutes ${slot} into root_${slot}. The
+	 * ${boot_partnum}/${scriptaddr} refs below expand at run time. */
 	slot_str[0] = slot;
 	slot_str[1] = '\0';
 	env_set("slot", slot_str);
@@ -984,9 +706,7 @@ static int do_ab_boot(struct cmd_tbl *cmdtp, int flag, int argc,
 		 "/extlinux/extlinux.conf", slot);
 	run_command(cmd, 0);
 
-	/* sysboot only returns on failure. The decrement above already
-	 * persisted, so just reboot — the selector re-runs with a lower
-	 * try count and eventually flips. */
+	/* sysboot only returns on failure; the decrement already persisted. */
 	printf("AB: slot %c boot returned/failed, rebooting\n", slot);
 	run_command("reset", 0);
 	return 0;	/* not reached */
@@ -1003,11 +723,8 @@ U_BOOT_CMD(
 );
 
 /*
- * Hook into cmd/usb_mass_storage.c so the user can exit the UMS loop
- * without UART. Pressing "back" stops UMS cleanly.
- *
- * Polled once per USB-MS handle cycle; the back button is edge-tracked
- * (released-to-pressed) so a held button doesn't fire repeatedly.
+ * Hook for cmd/usb_mass_storage.c: lets "back" exit the UMS loop without a
+ * UART. Edge-tracked so a held button doesn't fire repeatedly.
  */
 int ums_board_abort_check(void)
 {

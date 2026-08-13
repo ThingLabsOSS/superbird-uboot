@@ -1,37 +1,17 @@
 // SPDX-License-Identifier: GPL-2.0+
 /*
- * Apple MFi authentication coprocessor (CP2.0 / CP3.0 family) driver
- * for the Spotify Car Thing. The chip sits on I2C bus 3 at address
- * 0x10 (GPIOA_14/15 pinmux).
+ * Apple MFi authentication coprocessor (CP2.0 / CP3.0), I2C bus 3 addr 0x10.
+ * Protocol reconstructed from a clean-room decompile of stock's
+ * apple_mfi_auth_i2c.ko. Register map + IOCTL mapping:
+ * superbird-misc-notes/i2c/README.md.
  *
- * Transport protocol reconstructed from a clean-room decompile of the
- * stock kernel module `apple_mfi_auth_i2c.ko` (vendor blob shipped on
- * the Car Thing for MFi-licensed accessory authentication). Two key
- * quirks vs. a normal SMBus device:
- *
- *  - The chip sleeps when idle. The first I2C transaction wakes it
- *    and NAKs. Up to 3 retries with ~860 us between are needed.
- *
- *  - Reads use a SPLIT transaction: write the 1-byte cmd as a full
- *    transaction (with STOP), then a separate read transaction with
- *    no preceding sub-address write. u-boot's combined md/read APIs
- *    issue write-then-repeated-start-read which the chip does NOT
- *    handle correctly for most registers.
- *
- *  - Reading CERT_LEN (cmd 0x30) and CERT (cmd 0x31) requires a 10 ms
- *    settle between prepare-write and read.
- *
- * Register map (all multi-byte values big-endian on the wire):
- *
- *   0x00  VERSION       1B  R    Firmware version
- *   0x05  ERROR         1B  R    Last error code
- *   0x10  STATUS/START  1B  R/W  Read status / write 1 to start signing
- *   0x12  RESPONSE      64B R    ECDSA(P-256) signature of challenge
- *   0x20  CHALLENGE_LEN 2B  R    Expected challenge length (32)
- *   0x21  CHALLENGE     32B W    Challenge data
- *   0x30  CERT_LEN      2B  R    X.509 certificate length
- *   0x31  CERT          N B R    X.509 certificate
- *   0x4E  SERIAL        32B R    Device serial number / UID
+ * Three quirks vs a normal SMBus device, all load-bearing:
+ *  - Sleeps when idle; the first transaction wakes it and NAKs. Needs up to
+ *    3 retries ~860 us apart.
+ *  - Reads are SPLIT: the cmd write is its own transaction (with STOP), then
+ *    a separate read with no sub-address. u-boot's combined APIs issue
+ *    write-then-repeated-start, which the chip mishandles on most registers.
+ *  - CERT_LEN (0x30) and CERT (0x31) need a 10 ms settle before the read.
  */
 #include <dm.h>
 #include <dm/uclass.h>

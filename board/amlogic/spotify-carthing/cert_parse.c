@@ -129,32 +129,11 @@ static int extract_last_cn(const uint8_t *region, size_t region_len,
 }
 
 /*
- * Find the TBSCertificate's "innards" so we can scan for issuer,
- * validity, subject. The carthing's cert is PKCS#7-wrapped:
- *
- *   ContentInfo SEQ
- *     OID 1.2.840.113549.1.7.2 (signedData)
- *     [0] EXPL { SignedData SEQ
- *       version INT
- *       digestAlgorithms SET
- *       encapContentInfo SEQ { OID 1.2.840.113549.1.7.1, ... }
- *       certificates [0] IMPL { Certificate SEQ {  <-- target
- *         TBSCertificate SEQ { ... },
- *         signatureAlgorithm SEQ,
- *         signatureValue BITSTRING
- *       }}
- *       signerInfos SET
- *     }
- *
- * For this cert in particular: the inner X.509 starts at the FIRST
- * `30 82 01 d1` (SEQUENCE, length 0x01d1 = 465). We could parse the
- * envelope rigorously, but a more pragmatic approach is: locate the
- * pkcs7-data OID `2a 86 48 86 f7 0d 01 07 01`, then find the cert
- * SEQUENCE right after.
- *
- * Even more pragmatic still — and what we do here — is byte-pattern
- * match for `30 82 01` then verify the length is sane. That's robust
- * for this specific issuer-signed format.
+ * The cert is PKCS#7-wrapped, so dig out the inner X.509 before scanning for
+ * issuer / validity / subject. Rather than parse the envelope, byte-pattern
+ * match for `30 82 01` and sanity-check the length — robust for this specific
+ * issuer-signed format, and nothing more.
+ * Envelope structure + the alternatives: superbird-misc-notes/i2c/README.md.
  */
 static int find_x509(const uint8_t *cert, size_t cert_len,
 		     const uint8_t **x509_out, size_t *x509_len_out)

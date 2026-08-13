@@ -3,23 +3,15 @@
  * Sitronix ST7701S MIPI-DSI panel driver — Spotify Car Thing variant
  * (vendor calls this `panel_type=lcd_8`).
  *
- * 480x800, 2-lane MIPI DSI, ~31.6 MHz pixel clock. The init command
- * sequence is the byte-for-byte copy from the vendor 2015.01 u-boot
- * (board/amlogic/superbird_production/lcd_extern.h, table
- * `ext_init_on_table_ST7701S`) — every other ST7701S variant in vendor
- * source has a different gamma/Vcom/GIP table, so this MUST stay
- * carthing-specific.
+ * 480x800, 2-lane MIPI DSI. The init table is the verified shipping table —
+ * every other ST7701S variant in vendor source has a different gamma/Vcom/GIP
+ * table, so this MUST stay carthing-specific.
  *
- * Power-on sequence (from vendor `lcd_power_on_step_ST7701S`):
- *   1. VCC GPIO -> 1 (release), wait 1ms       [vendor uses active-low VCC]
- *   2. RESET GPIO -> 0 (assert), wait 10ms
- *   3. RESET GPIO -> 1 (release), wait 120ms
- *   4. Send DSI init table
- *   5. wait 200ms ("signal" step in vendor)
+ * Power-on sequence (vendor lcd_power_on_step_ST7701S):
+ *   VCC release, 1ms -> RESET assert, 10ms -> RESET release, 120ms ->
+ *   init table -> 200ms
  *
- * Vendor wires:
- *   - LCD reset = GPIOZ_5 (active-low)
- *   - LCD power = GPIOZ_6 (active-low — driving it 0 = powered on)
+ * GPIOZ_5 = reset, GPIOZ_6 = power. Both active-low.
  */
 
 #include <backlight.h>
@@ -138,25 +130,10 @@ static const u8 st7701s_carthing_init[] = {
 };
 
 /*
- * NB: these are NOT the values in vendor's open-source `ext_lcd_config[lcd_8]`
- * (which says h_period=630, v_period=836, pclk=31.6MHz, vsync_len=4).
- *
- * They're the values the shipping firmware actually programs into ENCL on
- * a running stock unit, observed by dropping the device into vendor's
- * u-boot CLI and dumping registers. The open-source source has drifted
- * from what Spotify is actually shipping.
- *
- * Derived from these live register reads:
- *   ENCL_VIDEO_MAX_PXCNT   = 0x225  -> htotal     = 550
- *   ENCL_VIDEO_MAX_LNCNT   = 0x34d  -> vtotal     = 846
- *   ENCL_VIDEO_HAVON_BEGIN = 0x028  -> hsync_len+hbp = 40
- *   ENCL_VIDEO_HSO_END     = 0x00a  -> hsync_len  = 10  (so hbp = 30)
- *   ENCL_VIDEO_VAVON_BLINE = 0x01a  -> vsync_len+vbp = 26
- *   ENCL_VIDEO_VSO_ELINE   = 0x006  -> vsync_len  = 6   (so vbp = 20)
- *
- * pclk = htotal * vtotal * 60 Hz = 550 * 846 * 60 = 27.918 MHz.
- *
- * Full discussion in superbird-docs/uboot/spotify-carthing-display-notes.md.
+ * These are NOT vendor's open-source ext_lcd_config[lcd_8] values — that
+ * source has drifted from what Spotify ships. These were read back from ENCL
+ * on a running stock unit. Register reads + derivation:
+ * superbird-docs/uboot/spotify-carthing-display-notes.md.
  */
 static const struct display_timing st7701s_carthing_timing = {
 	.pixelclock.typ		= 27918000,
@@ -218,34 +195,15 @@ static int st7701s_send_init_table(struct mipi_dsi_device *dsi)
 }
 
 /*
- * Diagnostic: read back the ST7701S status registers via DCS once the init
- * table has been sent and we're still in command mode. This serves two ends:
+ * Post-init DCS status dump. Two jobs: the read's bus-turnaround forces any
+ * pending command TX to complete (belt for the quiesce in
+ * dw_mipi_dsi_set_mode), and it fingerprints each boot so the rare ~1/150 bad
+ * DSI handoff can be diffed against a known-good baseline.
  *
- *   1. It forces any still-pending command TX to fully complete (the read's
- *      bus-turnaround can't happen until the host is idle), doubling as a belt
- *      for the host-side quiesce in dw_mipi_dsi_set_mode().
- *   2. It gives a per-boot fingerprint for the rare (~1/150) bad DSI handoff
- *      that shifts the image + mangles colour. That failure is otherwise
- *      invisible before the OS adopts the link, so the log is the only cheap
- *      way to catch it.
- *
- * RDDPM (power mode) alone is NOT enough: on a confirmed bad-handoff boot
- * (2026-05-24) it still read a healthy 0x9c while the image was shifted +
- * miscoloured — so the corruption lives in a register RDDPM doesn't cover, or
- * in the panel's video-stream alignment (which no register reflects). We dump
- * the full status set so a glitched boot can be diffed against a known-good
- * baseline to pin which register (if any) is wrong.
- *
- * Healthy values for our config (ST7701S datasheet 12.2.8-12.2.13):
- *   RDDPM    0x0A = 0x9c  D7 booster / D4 sleep-out / D3 fixed-1 / D2 disp-on
- *   RDDMADCTL0x0B = 0x00  MADCTL not programmed (ML=D4, BGR=D3 clear)
- *   RDDCOLMOD0x0C = ----  VIPF[6:4] pixel format (log raw, baseline-compare)
- *   RDDIM    0x0D = 0x00  no inversion (D5), default gamma curve GCS[2:0]=0
- *   RDDSM    0x0E = 0x80  D7 tearing-effect-line on, D6 mode (we send TEON)
- *   RDDSDR   0x0F = 0xc0  D7 RLD + D6 FUND set: register-load & functionality OK
- * RDDPM != 0x9c and RDDSDR's self-diagnostic bits not both set log as
- * warnings; the rest are logged raw for cross-boot comparison. Non-fatal --
- * this only reports, it never blocks bring-up.
+ * RDDPM alone is insufficient — it reads a healthy 0x9c even on a confirmed
+ * glitched boot, so dump the whole set. Report-only, never blocks bring-up.
+ * Healthy values + the investigation:
+ * superbird-docs/uboot/dsi-frame-phase-glitch-handoff.md.
  */
 #define ST7701S_RDDPM_HEALTHY	0x9c
 #define ST7701S_RDDSDR_OK	0xc0	/* D7 RLD | D6 FUND both set */

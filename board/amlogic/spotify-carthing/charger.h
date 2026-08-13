@@ -4,11 +4,7 @@
 
 #include <linux/types.h>
 
-/*
- * USB_SWC values for the chip's DPDT analog switch. Drives where the
- * USB-C connector's D+/D- lines get routed. See MAX14656 datasheet
- * register CONTROL 1 (0x07) bits [3:2].
- */
+/* Where the DPDT analog switch routes D+/D-. MAX14656 CONTROL 1 (0x07) [3:2]. */
 enum carthing_charger_swc {
 	CARTHING_CHARGER_SWC_OPEN = 0,	/* all switches open - D+/D- disconnected from SoC */
 	CARTHING_CHARGER_SWC_UART = 1,	/* CD+/CD- routed to UT/UR (UART) */
@@ -22,20 +18,15 @@ struct carthing_charger_info {
 	int valid;		/* 1 if read succeeded, 0 otherwise */
 };
 
-/* Settling delay after triggering a redetect via carthing_charger_redetect()
- * before reading the status register back. Empirical — the chip takes ~150 ms
- * to re-run BC1.2 detection on a stable VBUS; 250 ms gives margin for
- * slow-rising supplies. */
+/* Settle time after a redetect before the status read. The chip re-runs BC1.2
+ * in ~150 ms on stable VBUS; 250 ms covers slow-rising supplies. */
 #define CARTHING_CHARGER_REDETECT_DELAY_MS	250
 
-/* Reads registers 0x00..0x09 from the USB-source classifier IC (0x0a..0x0f
- * are RFU and not read). Returns 0 on success, negative errno on I2C
- * failure. `info` is always populated (info->valid distinguishes good vs
- * failed). */
+/* Returns 0 on success, negative errno on I2C failure. `info` is populated
+ * either way — check info->valid. */
 int carthing_charger_read(struct carthing_charger_info *info);
 
-/* Decode the status register byte into a human-readable label.
- * Always returns a non-NULL constant string. */
+/* Always returns a non-NULL constant string. */
 const char *carthing_charger_type_str(uint8_t status);
 
 /* Write a single register. Use with care — writing into a power IC
