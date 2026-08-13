@@ -34,7 +34,7 @@ int meson_get_boot_device(void);
 
 /*
  * eFuse user-area serials, read via the secure-monitor SMC (BL31 owns the
- * fuse controller MMIO). Layout: superbird-docs/uboot/efuse_architecture.md.
+ * fuse controller MMIO). Layout: superbird-docs/hardware/efuse-architecture.md.
  */
 #define EFUSE_USID_OFFSET	18
 #define EFUSE_USID_SIZE		16
@@ -86,7 +86,7 @@ fallback:
 /*
  * Boot glow + splash ramp tuning. Backlight percent is INVERTED (higher =
  * dimmer). Tune on-device with `blramp`.
- * Rationale: superbird-docs/uboot/splash-and-backlight.md.
+ * Rationale: superbird-docs/display/splash-and-backlight.md.
  */
 #define CARTHING_BOOT_GLOW		100	/* dim glow */
 #define CARTHING_PANEL_SETTLE_MS	80	/* panel lock time before painting */
@@ -124,7 +124,7 @@ static int charger_status_settled(uint8_t status)
 /*
  * CHG_TYP_S -> peak CPU kHz the kernel should cap scaling_max_freq at,
  * published as ${charger_cap_khz} for extlinux to substitute. Bands and
- * kernel-side wiring: superbird-misc-notes/i2c/README.md.
+ * kernel-side wiring: superbird-docs/hardware/i2c-devices.md.
  * Unknown/unreadable falls through to the conservative SDP cap.
  */
 static const char *charger_cpufreq_cap_khz(uint8_t status)
@@ -246,7 +246,7 @@ static void carthing_boot_route(void);
  *
  * Deliberately NOT env_set("bootcmd") — a later env_save would persist that
  * transient override and every subsequent eMMC boot would auto-fastboot.
- * See superbird-docs/uboot/boot-flow.md.
+ * See superbird-docs/boot/boot-flow.md.
  */
 static void set_boot_source(void)
 {
@@ -271,7 +271,7 @@ static void set_boot_source(void)
  * "User held buttons 1+4 for mask-ROM but the SoC fell back to eMMC."
  * The POC nibble latched at strapping records the intent and survives the
  * fallback, so this works even if the buttons were released since.
- * Nibble values + register layout: superbird-docs/uboot/boot-flow.md.
+ * Nibble values + register layout: superbird-docs/boot/boot-flow.md.
  */
 #define AO_SEC_GP_CFG0	0xff800240UL
 #define POC_SHIFT	4
@@ -303,7 +303,7 @@ static void detect_maskrom_failed(int boot_device)
  * filesystem gets painted instead of the baked-in splash, so a slot can
  * rebrand without reflashing u-boot.
  * Requires 16/24/32bpp BMP support in the defconfig — without it the uclass
- * rejects colour BMPs. Details: superbird-docs/uboot/splash-and-backlight.md.
+ * rejects colour BMPs. Details: superbird-docs/display/splash-and-backlight.md.
  */
 #define CARTHING_LOGO_PATH	"/logo.bmp"
 /* kernel_addr_r's region — free here, and the BMP is consumed immediately. */
@@ -406,7 +406,7 @@ static void carthing_show_splash(struct udevice *dev)
  *
  * Set-if-absent, so a correct saved env or a user override still wins, and
  * ab_boot stays free to rewrite `slot` per failover.
- * Why these two specifically: superbird-docs/uboot/boot-flow.md.
+ * Why these two specifically: superbird-docs/boot/boot-flow.md.
  */
 static void carthing_guarantee_env(void)
 {
@@ -429,7 +429,7 @@ static void carthing_guarantee_env(void)
  * switch the mmc core silently drops to a slower mode and reports success.
  * A degraded bus is a candidate for the pre-handoff bootloop, so make it
  * loud, and publish `emmc_mode` so it is readable without a UART.
- * Per-part measurements: the DT overlay + superbird-misc-notes/perf-bench.
+ * Per-part measurements: the DT overlay + superbird-docs/performance/perf-envelope.md.
  */
 static void carthing_report_mmc_mode(void)
 {
@@ -499,7 +499,7 @@ int misc_init_r(void)
  * SCP-owned and ANY CPU write to it hard-hangs the bus (confirmed at EL2 and
  * EL3). PREG_STICKY_REG3 is freely CPU-writable, survives the SCPI reboot,
  * and clears on a cold power cycle. Magic-tagged and one-shot so garbage is
- * never read as a reason. See superbird-docs/uboot/reboot-bootloader.md.
+ * never read as a reason. See superbird-docs/boot/reboot-bootloader.md.
  */
 #define CARTHING_RR_STICKY	0xff6345ccUL	/* PREG_STICKY_REG3 */
 #define CARTHING_RR_MAGIC	0x5242a100U	/* "RB" tag, bits 31:8 */
@@ -556,7 +556,7 @@ int fastboot_set_reboot_flag(enum fastboot_reboot_reason reason)
 /*
  * Decides whether to intercept the boot before autoboot fires bootcmd, so an
  * env override can't bypass it. Priority order is the sequence below; the
- * reasoning behind it is in superbird-docs/uboot/boot-flow.md.
+ * reasoning behind it is in superbird-docs/boot/boot-flow.md.
  *
  * Idempotent: none of these conditions self-clear within a boot, so a second
  * invocation (e.g. bootcmd=boot_check) would otherwise loop forever.
@@ -652,7 +652,7 @@ U_BOOT_CMD(
  * carry the macro forward can't break booting (commit 7578f41b06).
  *
  * Full state machine + the both-slots-broken behaviour:
- * superbird-docs/uboot/boot-flow.md.
+ * superbird-docs/boot/boot-flow.md.
  */
 #define AB_DEFAULT_TRIES	3
 

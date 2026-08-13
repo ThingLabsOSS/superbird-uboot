@@ -133,7 +133,7 @@ static const u8 st7701s_carthing_init[] = {
  * These are NOT vendor's open-source ext_lcd_config[lcd_8] values — that
  * source has drifted from what Spotify ships. These were read back from ENCL
  * on a running stock unit. Register reads + derivation:
- * superbird-docs/uboot/spotify-carthing-display-notes.md.
+ * superbird-docs/display/display-bringup.md.
  */
 static const struct display_timing st7701s_carthing_timing = {
 	.pixelclock.typ		= 27918000,
@@ -203,7 +203,7 @@ static int st7701s_send_init_table(struct mipi_dsi_device *dsi)
  * RDDPM alone is insufficient — it reads a healthy 0x9c even on a confirmed
  * glitched boot, so dump the whole set. Report-only, never blocks bring-up.
  * Healthy values + the investigation:
- * superbird-docs/uboot/dsi-frame-phase-glitch-handoff.md.
+ * superbird-docs/display/dsi-frame-phase-glitch.md.
  */
 #define ST7701S_RDDPM_HEALTHY	0x9c
 #define ST7701S_RDDSDR_OK	0xc0	/* D7 RLD | D6 FUND both set */
@@ -334,7 +334,7 @@ static int st7701s_carthing_probe(struct udevice *dev)
 	 * from shipping firmware shows the carthing's actual panel runs
 	 * with HS continuous (clk_always_hs=1 per `lcd info`, LPCLK_CTRL=0x1).
 	 * Setting NON_CONTINUOUS here makes the LCD layer stay dark. See
-	 * superbird-docs/uboot/spotify-carthing-display-notes.md.
+	 * superbird-docs/display/display-bringup.md.
 	 */
 	plat->mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_VIDEO_BURST |
 			   MIPI_DSI_MODE_LPM;

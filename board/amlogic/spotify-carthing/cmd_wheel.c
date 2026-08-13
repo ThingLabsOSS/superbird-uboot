@@ -10,7 +10,7 @@
  *
  * Detents are the (0,0) and (1,1) states, so wheel_poll_detents() only counts
  * transitions landing on one — 1 physical click = exactly +/-1.
- * Transition table: superbird-docs/uboot/knob_decoder.md.
+ * Transition table: superbird-docs/hardware/knob-decoder.md.
  */
 
 #include <command.h>

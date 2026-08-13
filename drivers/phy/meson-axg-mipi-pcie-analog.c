@@ -99,7 +99,7 @@ static void phy_dsi_analog_enable(struct phy_meson_axg_mipi_pcie_analog_priv *pr
 	 *   HHI_MIPI_CNTL1 = 0x0001002e  (CH0_CML_PDR_EN, LP_ABILITY tuned)
 	 *   HHI_MIPI_CNTL2 = 0x2680e45a  (CH_PU/CH_CTL/CH_EN/LP_CTL all tuned)
 	 *
-	 * See superbird-docs/uboot/spotify-carthing-display-notes.md.
+	 * See superbird-docs/display/display-bringup.md.
 	 *
 	 * TODO: these should arguably be DT-provided per board rather than
 	 * baked into the AXG dphy driver. Hardcoding for now to unblock the

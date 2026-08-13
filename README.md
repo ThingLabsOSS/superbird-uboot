@@ -26,8 +26,10 @@ as `aml-user-key.sig` in their `spsgsb/uboot` repo. The whole user area
 
   - Cold boot in ~5 sec, panel splash visible (Sitronix ST7701S DSI
     panel fully driven from u-boot — see
-    `superbird-docs/uboot/spotify-carthing-display-notes.md`).
-  - eMMC (8-bit DDR52, 42 MB/s sustained), fastboot, UMS, env-in-FAT.
+    `superbird-docs/display/display-bringup.md`).
+  - eMMC (8-bit HS52 SDR, 38-45 MB/s sustained), fastboot, UMS,
+    env-in-FAT. DDR52 is deliberately not offered — the mode switch
+    fails on Kioxia parts and silently falls back.
   - On-panel **boot menu** (preset1/preset4 + wheel + back) — fastboot,
     UMS, brightness, charger info, hardware inventory, hwid QR.
   - On-panel auto-detected modes — when chainloaded via mask-ROM USB the

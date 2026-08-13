@@ -130,10 +130,12 @@ static int extract_last_cn(const uint8_t *region, size_t region_len,
 
 /*
  * The cert is PKCS#7-wrapped, so dig out the inner X.509 before scanning for
- * issuer / validity / subject. Rather than parse the envelope, byte-pattern
- * match for `30 82 01` and sanity-check the length — robust for this specific
- * issuer-signed format, and nothing more.
- * Envelope structure + the alternatives: superbird-misc-notes/i2c/README.md.
+ * issuer / validity / subject. Rather than parse the envelope, find the v3
+ * version marker `a0 03 02 01 02` and walk BACKWARD to the SEQUENCE header
+ * that wraps it — the header sits 3 or 4 bytes back depending on whether the
+ * length is 0x81- or 0x82-encoded. Robust for this specific issuer-signed
+ * format, and nothing more.
+ * Envelope structure + the alternatives: superbird-docs/hardware/i2c-devices.md.
  */
 static int find_x509(const uint8_t *cert, size_t cert_len,
 		     const uint8_t **x509_out, size_t *x509_len_out)

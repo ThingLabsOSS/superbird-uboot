@@ -1069,7 +1069,7 @@ static void meson_vclk_setup(struct meson_vpu_priv *priv, unsigned int target,
  * panel; vendor's ~670 Mbps gives roughly 2x headroom and the ST7701S HS
  * receivers latch reliably.
  *
- * See superbird-docs/uboot/spotify-carthing-display-notes.md for the full investigation.
+ * See superbird-docs/display/display-bringup.md for the full investigation.
  *
  * The dphy analog block (HHI_MIPI_CNTL0/1/2) is programmed separately by
  * drivers/phy/meson-axg-mipi-pcie-analog.c when the wrapper calls

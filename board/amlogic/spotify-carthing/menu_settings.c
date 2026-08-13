@@ -4,7 +4,7 @@
  *
  * "Init display at boot" is stored in env `quick_boot` — legacy name, kept so
  * existing setups don't break, and its polarity is INVERTED (display-init=Yes
- * means quick_boot unset or 0). Tradeoff: superbird-docs/uboot/boot-flow.md.
+ * means quick_boot unset or 0). Tradeoff: superbird-docs/boot/boot-flow.md.
  */
 
 #include <command.h>

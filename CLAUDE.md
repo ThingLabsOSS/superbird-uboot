@@ -19,7 +19,7 @@ below.
     `--burn_mode CUSTOM_FIP` is now the path).
   - **Phase 2 — chain-loaded upstream u-boot with display + backlight:
     DONE 2026-05-12.** ST7701S panel lights up + renders the u-boot
-    splash + vidconsole output. See `superbird-docs/uboot/spotify-carthing-display-notes.md`
+    splash + vidconsole output. See `superbird-docs/display/display-bringup.md`
     for the deep dive; 7 upstream u-boot bugs found+fixed along the way.
       - **Panel-quality pass (2026-06): DONE.** Replaced the ST7701S init
         table in `drivers/video/sitronix-st7701s-carthing.c` with the
@@ -55,7 +55,7 @@ below.
     joey-4.9.113 + stock-rootfs path (first kernel boot 2026-05-15) is
     abandoned; notes archived in `memory/MEMORY_archive.md` for the GPT
     layout + durable u-boot bugs, not the kernel choice. See
-    `superbird-docs/uboot/phase3-roadmap.md` for the broader roadmap.
+    `superbird-docs/uboot-port/roadmap.md` for the broader roadmap.
       - **Coupling to this repo:** yocto's `superbird-uboot_git.bb` pins
         `ThingLabsOSS/superbird-uboot.git;branch=master` at a SRCREV (as of
         2026-06 = our HEAD, the LCD-dither-disable commit). **After pushing

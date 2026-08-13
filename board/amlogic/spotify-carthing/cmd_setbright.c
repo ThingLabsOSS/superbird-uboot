@@ -2,7 +2,7 @@
 /*
  * `setbright` / `blramp` — panel backlight control, used by the boot menu and
  * from the CLI. The PWM is INVERTED: 0 = brightest, 100 = dimmest.
- * See superbird-docs/uboot/splash-and-backlight.md.
+ * See superbird-docs/display/splash-and-backlight.md.
  */
 
 #include <command.h>

@@ -3,7 +3,7 @@
  * Apple MFi authentication coprocessor (CP2.0 / CP3.0), I2C bus 3 addr 0x10.
  * Protocol reconstructed from a clean-room decompile of stock's
  * apple_mfi_auth_i2c.ko. Register map + IOCTL mapping:
- * superbird-misc-notes/i2c/README.md.
+ * superbird-docs/hardware/i2c-devices.md.
  *
  * Three quirks vs a normal SMBus device, all load-bearing:
  *  - Sleeps when idle; the first transaction wakes it and NAKs. Needs up to
