@@ -66,13 +66,15 @@ no host required after this" recipe:
    ```
    That assembles info_sector (LBA 0) + stock-BL2[:0x10000] +
    signed-FIP[0x10000:], padded to 2 MiB (4096 sectors).
-5. **Stage + write to boot0 and boot1** via fastboot:
+5. **Write it to boot0 and boot1** via fastboot:
    ```bash
-   sudo fastboot stage /tmp/boot.bin
-   sudo fastboot oem console "mmc dev 0 1; mmc write 0x6000000 0 0x1000"
-   sudo fastboot oem console "mmc dev 0 2; mmc write 0x6000000 0 0x1000"
+   sudo fastboot flash mmc0boot0 /tmp/boot.bin
+   sudo fastboot flash mmc0boot1 /tmp/boot.bin
    sudo fastboot oem console "mmc dev 0 0"
    ```
+   The `mmc dev 0 0` is required — flashing a boot partition leaves the
+   eMMC hwpart selected, so without it the next user-area access hits
+   boot1.
 6. **Wipe the user area** so BL2's fallback chain (MPT → user-area
    fip_a/b → boot0 → boot1) can't find an older mirror to fall back to:
    ```bash
