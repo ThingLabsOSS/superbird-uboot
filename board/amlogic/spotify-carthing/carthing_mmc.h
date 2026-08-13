@@ -30,4 +30,11 @@ void carthing_mmc_fast_for_host(void);
 /* Name of the mode the card actually negotiated, for the debug report. */
 const char *carthing_mmc_current_mode(void);
 
+/* The negotiated mode as an enum, so callers can check they got what
+ * they asked for. Requesting a mode only fails loudly if the mode is
+ * absent from host_caps; if the switch itself fails the mmc core falls
+ * back to a slower mode and reports success, which silently invalidated
+ * a probe run until this existed. */
+enum bus_mode carthing_mmc_current_mode_id(void);
+
 #endif /* __CARTHING_MMC_H */

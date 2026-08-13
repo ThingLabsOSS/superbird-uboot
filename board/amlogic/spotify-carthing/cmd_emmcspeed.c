@@ -154,6 +154,15 @@ void carthing_mmc_fast_for_host(void)
 	}
 }
 
+enum bus_mode carthing_mmc_current_mode_id(void)
+{
+	struct mmc *mmc = find_mmc_device(CARTHING_MMC_DEV);
+
+	if (!mmc || !mmc->has_init)
+		return MMC_MODES_END;
+	return mmc->selected_mode;
+}
+
 const char *carthing_mmc_current_mode(void)
 {
 	struct mmc *mmc = find_mmc_device(CARTHING_MMC_DEV);

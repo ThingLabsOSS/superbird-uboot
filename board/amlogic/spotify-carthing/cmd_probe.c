@@ -81,14 +81,29 @@ static void probe_big_read(const char *label)
 	       took ? (16384UL * 1000UL) / took : 0);
 }
 
-static void probe_speed_case(const char *label, int mode)
+/*
+ * Test one bus speed, and be explicit about whether we actually got it.
+ *
+ * Asking for a mode is not the same as reaching it: if the mode is in
+ * host_caps but the switch fails, the mmc core quietly falls back to a
+ * slower one and reports success. A Kioxia 004GA0 unit did exactly
+ * that — requested DDR52, negotiated legacy — and the run looked fine
+ * until the modes were compared line by line. Say so loudly instead.
+ */
+static bool probe_speed_case(const char *label, int mode)
 {
+	bool got_it;
+
 	if (carthing_mmc_set_mode(mode, true)) {
 		printf("%-12s could not select mode %d\n", label, mode);
-		return;
+		return false;
 	}
-	printf("%-12s mode=%s\n", label, carthing_mmc_current_mode());
+
+	got_it = carthing_mmc_current_mode_id() == mode;
+	printf("%-12s mode=%s%s\n", label, carthing_mmc_current_mode(),
+	       got_it ? "" : "   <-- NOT THE REQUESTED MODE, fell back");
 	probe_big_read(label);
+	return got_it;
 }
 
 /*
@@ -97,6 +112,8 @@ static void probe_speed_case(const char *label, int mode)
  */
 static void probe_collect(void)
 {
+	bool ddr52_ok;
+
 	printf("===== Car Thing probe report =====\n");
 	printf("%s\n\n", version_string);
 
@@ -113,13 +130,17 @@ static void probe_collect(void)
 	printf("\n-- sustained read at each bus speed --\n");
 	probe_speed_case("HS 26MHz:", 1);	/* MMC_HS */
 	probe_speed_case("HS52 SDR:", 3);	/* MMC_HS_52 */
-	probe_speed_case("DDR52:", 4);		/* MMC_DDR_52 */
+	ddr52_ok = probe_speed_case("DDR52:", 4);	/* MMC_DDR_52 */
 
-	printf("\n-- rx phase x rx delay window at DDR52 --\n");
+	printf("\n-- rx phase x rx delay window --\n");
 	printf("('.' = 4 MiB read clean, 'X' = failed)\n");
-	if (carthing_mmc_set_mode(4, true)) {
-		printf("cannot reach DDR52 — skipping the phase sweep\n");
+	if (!ddr52_ok) {
+		/* Sweeping in a mode we didn't ask for produces a grid that
+		 * looks healthy and means nothing. */
+		printf("this unit cannot reach DDR52 — skipping the sweep,\n");
+		printf("there is no DDR52 timing window to measure\n");
 	} else {
+		printf("at %s\n", carthing_mmc_current_mode());
 		carthing_mmc_phase_scan();
 	}
 
